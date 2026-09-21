@@ -3,7 +3,7 @@ import path from 'node:path';
 
 const root=path.resolve(new URL('..',import.meta.url).pathname);
 const scanFiles=[
-  'index.html','src/main.js','src/styles.css','public/_headers','public/privacy.html','public/terms.html','public/intended-use.html','public/accessibility.html'
+  'index.html','src/main.js','src/styles.css','public/_headers','public/privacy.html','public/terms.html','public/intended-use.html','public/accessibility.html','public/partner-use.html'
 ].map(f=>path.join(root,f)).filter(fs.existsSync);
 const forbidden=[
   ['third-party HTTP request',/https?:\/\/(?!localhost|127\.0\.0\.1)/i],
@@ -19,7 +19,7 @@ for(const file of scanFiles){
   }
 }
 const main=fs.readFileSync(path.join(root,'src/main.js'),'utf8');
-for(const required of ['scanspace-safe-export-v1','DICOM UIDs and raw DICOM metadata are intentionally excluded','safeAnnotationExport']){
+for(const required of ['educational-imaging-safe-export-v2','DICOM UIDs and raw DICOM metadata are intentionally excluded','safeAnnotationExport']){
   if(!main.includes(required)) failures.push(`safe export requirement missing: ${required}`);
 }
 if(/console\.(log|info|warn|error)\(/.test(main.replace(/console\[level\]/g,''))){

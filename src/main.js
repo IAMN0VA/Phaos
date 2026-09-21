@@ -1,8 +1,9 @@
 import { ANATOMY_CATALOG, anatomyMatchesRegion, REGION_LABELS } from './anatomyCatalog.js';
 import { distanceMm, hasCalibratedSpacing } from './measurement.js';
 
-const APP_VERSION = '1.3.0';
-const BUILD_LABEL = 'Launch Hardening';
+const APP_NAME = 'PHAOS';
+const APP_VERSION = '1.5.0';
+const BUILD_LABEL = 'Explore · Study · Demo';
 const DEPENDENCY_VERSIONS = Object.freeze({ cornerstone:'5.8.2', vtk:'36.4.1' });
 const IS_DEV = Boolean(import.meta?.env?.DEV);
 function safeErrorText(err){
@@ -16,7 +17,7 @@ function safeErrorText(err){
 function diagnostic(code, err, level='warn'){
   if(!IS_DEV) return;
   const fn=console[level] || console.warn;
-  fn(`[SCAN//SPACE ${code}] ${safeErrorText(err)}`);
+  fn(`[${APP_NAME} ${code}] ${safeErrorText(err)}`);
 }
 function proximityLabel(score){
   if(score >= 78) return 'NEAR';
@@ -177,16 +178,18 @@ const els = {
   bookmarkList: $('#bookmarkList'), bookmarkCount: $('#bookmarkCount'), undoTool: $('#undoTool'), redoTool: $('#redoTool'),
   exportPng: $('#exportPng'), exportJson: $('#exportJson'), seriesChooser: $('#seriesChooser'), seriesList: $('#seriesList'), windowPresets: $('#windowPresets'),
   roiContext: $('#roiContext'), roiContextOut: $('#roiContextOut'), shadingToggle: $('#shadingToggle'),
+  brandName: $('#brandName'), aboutTitle: $('#aboutTitle'), audienceButton: $('#audienceButton'), audienceModal: $('#audienceModal'), partnerBanner: $('#partnerBanner'),
+  studyPanel: $('#studyPanel'), studyHideLabels: $('#studyHideLabels'), studyRevealLabels: $('#studyRevealLabels'), studyPrompt: $('#studyPrompt'),
   newStudy: $('#newStudy'), aboutButton: $('#aboutButton'), aboutModal: $('#aboutModal'), closeAbout: $('#closeAbout'), referenceBanner: $('#referenceBanner'), runtimeDiagnostics: $('#runtimeDiagnostics'), copyDiagnostics: $('#copyDiagnostics'),
 };
 
-const VIEWPORT_MAIN = 'SCANSPACE_MAIN';
-const VIEWPORT_SLICE = 'SCANSPACE_SLICE';
-const VIEWPORT_SAG = 'SCANSPACE_SAGITTAL';
-const VIEWPORT_COR = 'SCANSPACE_CORONAL';
-const TOOLGROUP_MAIN = 'SCANSPACE_MAIN_TOOLS';
-const TOOLGROUP_SLICE = 'SCANSPACE_SLICE_TOOLS';
-const TOOLGROUP_STACK = 'SCANSPACE_STACK_TOOLS';
+const VIEWPORT_MAIN = 'PHAOS_MAIN';
+const VIEWPORT_SLICE = 'PHAOS_SLICE';
+const VIEWPORT_SAG = 'PHAOS_SAGITTAL';
+const VIEWPORT_COR = 'PHAOS_CORONAL';
+const TOOLGROUP_MAIN = 'PHAOS_MAIN_TOOLS';
+const TOOLGROUP_SLICE = 'PHAOS_SLICE_TOOLS';
+const TOOLGROUP_STACK = 'PHAOS_STACK_TOOLS';
 
 const state = {
   initialized: false,
@@ -253,6 +256,8 @@ const state = {
   identifyMatches: [],
   identifyCenterWorld: null,
   geometryWarnings: [],
+  audience: 'explore',
+  studyLabelsHidden: false,
 };
 
 const anatomyByName = new Map();
@@ -262,6 +267,45 @@ for(const item of ANATOMY_CATALOG){
 }
 
 
+
+const AUDIENCE_LABELS = Object.freeze({ explore:'EXPLORE', study:'STUDY', demo:'DEMO' });
+function setAudience(mode, {close=true}={}){
+  const next = ['explore','study','demo'].includes(mode) ? mode : 'explore';
+  state.audience = next;
+  document.body.dataset.audience = next;
+  try{ sessionStorage.setItem('imagingAudience', next); }catch(_){}
+  if(els.audienceButton) els.audienceButton.textContent = AUDIENCE_LABELS[next];
+  if(els.studyPanel) els.studyPanel.classList.toggle('hidden', next !== 'study');
+  if(els.partnerBanner) els.partnerBanner.classList.toggle('hidden', next !== 'demo');
+  if(next !== 'study') setStudyLabelsHidden(false);
+  if(close) els.audienceModal?.classList.add('hidden');
+  const messages={
+    explore:'EXPLORE · Educational visualization for the public. Use the official report and a healthcare professional for medical interpretation.',
+    study:'STUDY · Educational anatomy and imaging tools for medical and health-science learning. Reference anatomy is not patient-specific detection.',
+    demo:'DEMO · Supplemental educational / technical visualization for imaging partners and clients. Not for device QA, calibration, acceptance testing, certification, or diagnosis.'
+  };
+  setNotice(messages[next]);
+}
+function setStudyLabelsHidden(hidden){
+  state.studyLabelsHidden = Boolean(hidden);
+  els.app?.classList.toggle('study-labels-hidden', state.studyLabelsHidden);
+  els.studyHideLabels?.classList.toggle('active', state.studyLabelsHidden);
+  els.studyRevealLabels?.classList.toggle('active', !state.studyLabelsHidden);
+  if(els.studyPrompt) els.studyPrompt.textContent = state.studyLabelsHidden
+    ? 'Reference names are visually hidden. Navigate the scan, identify the structure yourself, then press REVEAL LABELS to check.'
+    : 'Tip: hide labels, navigate the scan, then reveal the reference to check yourself.';
+}
+function initializeAudienceExperience(){
+  if(els.brandName) els.brandName.textContent = APP_NAME;
+  if(els.aboutTitle) els.aboutTitle.textContent = `${APP_NAME} ${APP_VERSION}`;
+  document.title = `${APP_NAME} — Explore · Study · Demo`;
+  const saved = (()=>{try{return sessionStorage.getItem('imagingAudience');}catch(_){return null;}})();
+  if(saved && ['explore','study','demo'].includes(saved)) setAudience(saved,{close:true});
+  else {
+    setAudience('explore',{close:false});
+    els.audienceModal?.classList.remove('hidden');
+  }
+}
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const cross = (a,b) => [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
 const dot = (a,b) => a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
@@ -308,7 +352,7 @@ async function initialize(){
   });
 
   registerWebImageLoader();
-  state.engine = new RenderingEngine('SCANSPACE_RENDERING_ENGINE');
+  state.engine = new RenderingEngine('PHAOS_RENDERING_ENGINE');
   installAnnotationLifecycle();
   state.initialized = true;
   hideLoading();
@@ -610,7 +654,7 @@ async function configureVolume(imageIds, firstImage, meta){
   // Cornerstone exposes that path. It avoids a second streaming-loader path
   // and guarantees the assembled volume is backed by the same pixel data that
   // successfully rendered in the 2D stack loader.
-  state.volumeId = `scanspace-volume-${Date.now()}`;
+  state.volumeId = `phaos-volume-${Date.now()}`;
   setLoading('ASSEMBLING VOLUME FROM SPATIAL DICOM DATA');
   if(typeof volumeLoader.createAndCacheVolumeFromImages === 'function'){
     state.volume = await volumeLoader.createAndCacheVolumeFromImages(state.volumeId, imageIds);
@@ -720,7 +764,7 @@ async function configureStack(imageIds, firstImage, meta){
   els.sliceDock.classList.add('hidden');
   els.worldOverlay.classList.add('hidden');
   $$('.volume-only').forEach(el => el.classList.add('hidden'));
-  setNotice('Single-frame DICOM detected. It remains a faithful 2D image; SCAN//SPACE does not invent a 3D body from one radiograph.');
+  setNotice('Single-frame DICOM detected. It remains a faithful 2D image; the viewer does not invent a 3D body from one radiograph.');
   hideLoading();
   snapshotAnnotations('initial');
   showToast('Single DICOM loaded locally', 2800);
@@ -767,7 +811,7 @@ function setAnnotationTool(which){
   else { state.activeTool=which; const ToolClass=which==='measure'?LengthTool:ArrowAnnotateTool; try{group.setToolActive(ToolClass.toolName,{bindings:[{mouseButton:csToolsEnums.MouseBindings.Primary}]});}catch(e){diagnostic('RUNTIME-WARN',e);} }
   clearAnnotationButtonStates();
   els.measureTool.classList.toggle('active',state.activeTool==='measure'); els.markerTool.classList.toggle('active',state.activeTool==='marker');
-  els.measureReadout.textContent=state.activeTool==='measure'?`MEASURE ACTIVE · WORLD-SPACE LENGTH · ${state.measurementCalibrated?'DICOM CALIBRATED':'UNCALIBRATED'}`:state.activeTool==='marker'?'MARKER ACTIVE · PLACE AN ARROW AND ENTER A LABEL':'SPATIAL IMAGE TOOLS · NO DIAGNOSTIC INTERPRETATION';
+  els.measureReadout.textContent=state.activeTool==='measure'?`MEASURE ACTIVE · WORLD-SPACE LENGTH · ${state.measurementCalibrated?'DICOM CALIBRATED':'UNCALIBRATED'}`:state.activeTool==='marker'?'MARKER ACTIVE · PLACE AN ARROW AND ENTER A LABEL':'EDUCATIONAL IMAGE TOOLS · NOT FOR DIAGNOSTIC INTERPRETATION';
   if(!state.activeTool && state.mprMode) activateCrosshairs();
 }
 
@@ -784,7 +828,7 @@ function setAdvancedTool(which, ToolClass, label){
     const el=els[`${which}Tool`]; el?.classList.add('active');
     els.measureReadout.textContent=`${label.toUpperCase()} ACTIVE · PHYSICAL DICOM SPACE`;
   } else {
-    els.measureReadout.textContent='SPATIAL IMAGE TOOLS · NO DIAGNOSTIC INTERPRETATION';
+    els.measureReadout.textContent='EDUCATIONAL IMAGE TOOLS · NOT FOR DIAGNOSTIC INTERPRETATION';
     if(state.mprMode) activateCrosshairs();
   }
 }
@@ -1993,7 +2037,7 @@ function toggleMPRMode(){
   requestAnimationFrame(()=>{
     try{state.engine.resize(true,false);}catch(_){}
     for(const id of [VIEWPORT_MAIN,VIEWPORT_SLICE,VIEWPORT_SAG,VIEWPORT_COR]){try{state.engine.getViewport(id)?.resetCamera?.();}catch(_){} }
-    if(state.mprMode) activateCrosshairs(); else if(state.activeTool==='crosshairs'){const g=getAnnotationToolGroup();try{g?.setToolPassive(CrosshairsTool?.toolName);}catch(_){}state.activeTool=null;els.measureReadout.textContent='SPATIAL IMAGE TOOLS · NO DIAGNOSTIC INTERPRETATION';}
+    if(state.mprMode) activateCrosshairs(); else if(state.activeTool==='crosshairs'){const g=getAnnotationToolGroup();try{g?.setToolPassive(CrosshairsTool?.toolName);}catch(_){}state.activeTool=null;els.measureReadout.textContent='EDUCATIONAL IMAGE TOOLS · NOT FOR DIAGNOSTIC INTERPRETATION';}
     try{state.engine.renderViewports([VIEWPORT_MAIN,VIEWPORT_SLICE,VIEWPORT_SAG,VIEWPORT_COR]);}catch(_){try{state.engine.render();}catch(__){}}
     resizeOverlay(); drawWorldOverlay();
   });
@@ -2046,22 +2090,23 @@ function exportCurrentPng(){
     const c=out.getContext('2d'); c.drawImage(viewportCanvas,0,0);
     c.fillStyle='#050709'; c.fillRect(0,viewportCanvas.height,out.width,footer);
     c.fillStyle='#b6c0c7'; c.font=`${Math.max(12,Math.round(out.width/90))}px system-ui,sans-serif`;
-    c.fillText(`SCAN//SPACE ${APP_VERSION} · VISUALIZATION ONLY · NO PATIENT IDENTIFIERS INCLUDED`,12,viewportCanvas.height+20);
-    out.toBlob(blob=>{if(!blob)return;downloadBlob(blob,`scanspace-${String(state.modality||'study').toLowerCase()}-${Date.now()}.png`);},'image/png');
+    c.fillText(`${APP_NAME} ${APP_VERSION} · EDUCATIONAL VISUALIZATION · VERIFY FOR BURNED-IN IDENTIFIERS`,12,viewportCanvas.height+20);
+    out.toBlob(blob=>{if(!blob)return;downloadBlob(blob,`medical-imaging-${String(state.modality||'study').toLowerCase()}-${Date.now()}.png`);},'image/png');
   }catch(e){diagnostic('EXPORT-PNG-001',e);showToast('PNG export failed [EXPORT-PNG-001]',2400);}
 }
 function exportStudyData(){
   if(!window.confirm('The safe data export excludes DICOM identifiers, but marker labels are user-entered and may contain identifying text. Continue?')) return;
   const data={
-    schema:'scanspace-safe-export-v1',version:APP_VERSION,
-    intendedUse:'visualization-and-education-only',
+    schema:'educational-imaging-safe-export-v2',version:APP_VERSION,
+    audience:state.audience,
+    intendedUse:'education-visualization-and-nonclinical-demonstration-only',
     study:{modality:state.modality,region:state.region},
     geometry:state.imageGeometry?{dimensions:state.imageGeometry.dims,spacing:state.imageGeometry.spacing}:null,
     bookmarks:(state.bookmarks||[]).map((b,i)=>({label:String(b.label||`Marker ${i+1}`).slice(0,120),world:(b.world||[]).slice(0,3).map(v=>Number(Number(v).toFixed(3)))})),
     annotations:safeAnnotationExport(),exportedAt:new Date().toISOString(),
     privacy:'Patient names, dates of birth, accession numbers, filenames, DICOM UIDs and raw DICOM metadata are intentionally excluded.'
   };
-  downloadBlob(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}),`scanspace-safe-data-${Date.now()}.json`);
+  downloadBlob(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}),`educational-imaging-safe-data-${Date.now()}.json`);
 }
 function downloadBlob(blob,name){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},500);}
 
@@ -2069,14 +2114,14 @@ function buildSafeDiagnostics(){
   const canvas=document.createElement('canvas');
   const webgl2=!!canvas.getContext('webgl2');
   return [
-    `SCAN//SPACE ${APP_VERSION} · ${BUILD_LABEL}`,
+    `${APP_NAME} ${APP_VERSION} · ${BUILD_LABEL}`,
     `Cornerstone ${DEPENDENCY_VERSIONS.cornerstone} · VTK ${DEPENDENCY_VERSIONS.vtk}`,
     `Browser: ${navigator.userAgent}`,
     `WebGL2: ${webgl2?'yes':'no'} · crossOriginIsolated: ${self.crossOriginIsolated?'yes':'no'}`,
     `CPU threads: ${navigator.hardwareConcurrency || 'unknown'} · device memory: ${navigator.deviceMemory ? navigator.deviceMemory+' GB' : 'unknown'}`,
-    `Study mode: ${state.mode || 'none'} · modality: ${state.modality || 'none'} · region class: ${state.region || 'none'}`,
+    `Experience: ${state.audience} · study mode: ${state.mode || 'none'} · modality: ${state.modality || 'none'} · region class: ${state.region || 'none'}`,
     `Geometry warnings: ${state.geometryWarnings.length ? state.geometryWarnings.join(' | ') : 'none'}`,
-    'No patient name, filename, DICOM UID, accession number, or raw metadata included.'
+    'No patient name, filename, DICOM UID, accession number, or raw DICOM metadata included. User-entered labels may contain identifying text.'
   ].join('\n');
 }
 function refreshDiagnostics(){ if(els.runtimeDiagnostics) els.runtimeDiagnostics.textContent=buildSafeDiagnostics(); }
@@ -2090,7 +2135,7 @@ function installWorkstationShortcuts(){
     if(['INPUT','TEXTAREA'].includes(document.activeElement?.tagName)) return;
     const mod=e.metaKey||e.ctrlKey;
     if(mod&&e.key.toLowerCase()==='z'){e.preventDefault();e.shiftKey?redoAnnotation():undoAnnotation();return;}
-    if(e.key==='Escape'){const g=getAnnotationToolGroup();allInteractiveAnnotationTools().forEach(t=>{try{g?.setToolPassive(t.toolName);}catch(_){}});state.activeTool=null;clearAnnotationButtonStates();if(state.mprMode)activateCrosshairs();else els.measureReadout.textContent='SPATIAL IMAGE TOOLS · NO DIAGNOSTIC INTERPRETATION';return;}
+    if(e.key==='Escape'){const g=getAnnotationToolGroup();allInteractiveAnnotationTools().forEach(t=>{try{g?.setToolPassive(t.toolName);}catch(_){}});state.activeTool=null;clearAnnotationButtonStates();if(state.mprMode)activateCrosshairs();else els.measureReadout.textContent='EDUCATIONAL IMAGE TOOLS · NOT FOR DIAGNOSTIC INTERPRETATION';return;}
     const k=e.key.toLowerCase();
     if(k==='m') setAnnotationTool('measure'); else if(k==='p') setAnnotationTool('marker'); else if(k==='h') setAdvancedTool('probe',ProbeTool,'HU / PROBE'); else if(k==='i') setAdvancedTool('identify',CircleROITool,'CIRCLE & IDENTIFY'); else if(k==='4') toggleMPRMode(); else if(k==='c') toggleCine(); else if(k==='1') updateSlicePlane('axial',true); else if(k==='2') updateSlicePlane('sagittal',true); else if(k==='3') updateSlicePlane('coronal',true); else if(k==='b'){$$('#colorMode button').find(x=>x.dataset.mode==='gray')?.click();} else if(k==='t'){$$('#colorMode button').find(x=>x.dataset.mode==='thermal')?.click();} else if(k==='s'){$$('#colorMode button').find(x=>x.dataset.mode==='skeletal')?.click();}
   });
@@ -2206,6 +2251,11 @@ els.orientationCube?.querySelectorAll('button').forEach(btn=>btn.addEventListene
 els.roiContext?.addEventListener('input',()=>updateIsolationContext(+els.roiContext.value));
 els.shadingToggle?.addEventListener('click',()=>{state.shading=!state.shading;els.shadingToggle.classList.toggle('active',state.shading);applyVisualization();});
 
+
+els.audienceModal?.querySelectorAll('[data-audience]').forEach(btn=>btn.addEventListener('click',()=>setAudience(btn.dataset.audience)));
+els.audienceButton?.addEventListener('click',()=>{els.audienceModal?.classList.remove('hidden');setTimeout(()=>els.audienceModal?.querySelector('[data-audience]')?.focus(),0);});
+els.studyHideLabels?.addEventListener('click',()=>setStudyLabelsHidden(true));
+els.studyRevealLabels?.addEventListener('click',()=>setStudyLabelsHidden(false));
 els.newStudy?.addEventListener('click',()=>{
   const ok=window.confirm('Clear this in-memory study, markers, measurements and viewer state?');
   if(ok) window.location.reload();
@@ -2217,6 +2267,7 @@ els.aboutModal?.addEventListener('click',(e)=>{if(e.target===els.aboutModal)els.
 
 installSliceDockDrag();
 installWorkstationShortcuts();
+initializeAudienceExperience();
 
 // Start the visual shell immediately. Cornerstone is initialized lazily after the
 // user selects a study so a worker/WASM problem can never block the native file picker.

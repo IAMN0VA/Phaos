@@ -23,11 +23,18 @@ if (!js.includes('installSliceDockDrag')) failures.push('Movable slice dock beha
 if (!js.includes('clearMeasurementsKeepMarkers')) failures.push('Session marker persistence behavior missing');
 if (/point cloud|point density/i.test(html + js)) failures.push('Legacy point-cloud terminology is still present');
 if (!css.includes('Work Sans')) failures.push('Work Sans typography is not configured');
+if (!html.includes('phaos-logo-cropped.png') || !js.includes("const APP_NAME = 'PHAOS'")) failures.push('PHAOS branding is incomplete');
 if (!js.includes('CircleROITool') || !js.includes('identifyAnatomyAtWorld')) failures.push('Circle & Identify implementation missing');
 for (const dep of ['@cornerstonejs/core','@cornerstonejs/dicom-image-loader','@cornerstonejs/tools','dicom-parser','fflate']) {
   if (!pkg.dependencies?.[dep]) failures.push(`Missing dependency ${dep}`);
 }
 if (!fs.existsSync(path.join(root,'public/_headers'))) failures.push('Missing deployment security headers');
+for (const id of ['audienceModal','audienceButton','studyPanel','studyHideLabels','studyRevealLabels','partnerBanner']) {
+  if (!html.includes(`id="${id}"`)) failures.push(`Missing audience experience UI: #${id}`);
+}
+for (const mode of ['explore','study','demo']) {
+  if (!html.includes(`data-audience="${mode}"`)) failures.push(`Missing audience mode ${mode}`);
+}
 
 const anatomyModule = await import(pathToFileURL(path.join(root, 'src/anatomyCatalog.js')).href);
 const catalog = anatomyModule.ANATOMY_CATALOG || [];
@@ -42,17 +49,17 @@ if (kindCount('tendon') < 25) failures.push(`Insufficient tendon references: ${k
 if (kindCount('ligament') < 30) failures.push(`Insufficient ligament references: ${kindCount('ligament')}`);
 
 
-for (const phrase of ['id="newStudy"','id="aboutButton"','id="referenceBanner"','/privacy.html','/intended-use.html','/terms.html','/accessibility.html']) {
+for (const phrase of ['id="newStudy"','id="aboutButton"','id="referenceBanner"','/privacy.html','/intended-use.html','/terms.html','/accessibility.html','/partner-use.html']) {
   if (!html.includes(phrase)) failures.push(`Missing launch-hardening UI/content: ${phrase}`);
 }
-if (!js.includes('scanspace-safe-export-v1')) failures.push('PHI-minimized export schema missing');
+if (!js.includes('educational-imaging-safe-export-v2')) failures.push('PHI-minimized export schema missing');
 if (/Math\.round\(matches\[0\]\.score\)\/100/.test(js) || /Spatial match .*\/100/.test(js)) failures.push('Identify still exposes percentage-like confidence');
 if (css.includes('fonts.googleapis.com') || html.includes('fonts.googleapis.com')) failures.push('Third-party font request remains in production UI');
 if (!css.includes('prefers-reduced-motion')) failures.push('Reduced-motion CSS missing');
 if (failures.length) {
-  console.error('SCAN//SPACE preflight FAILED');
+  console.error('PHAOS preflight FAILED');
   for (const f of failures) console.error(' -', f);
   process.exit(1);
 }
-console.log('SCAN//SPACE static preflight PASSED');
+console.log('PHAOS static preflight PASSED');
 console.log(`Checked ${new Set(requiredIds).size} DOM bindings, ${catalog.length} anatomy references, whole-body region coverage, production modes, dependencies, and deployment headers, safe export, accessibility hooks, and launch-hardening UI.`);

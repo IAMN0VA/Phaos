@@ -4,8 +4,10 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="color-scheme" content="dark" />
-  <title>SCAN//SPACE — Local Medical Imaging Explorer</title>
-  <meta name="description" content="Privacy-first browser medical imaging visualization and educational workstation. Visualization only; not diagnostic." />
+  <title>PHAOS — Explore · Study · Demo</title>
+  <meta name="description" content="PHAOS is a privacy-first browser medical-imaging visualization platform for the public, health-science students, and non-clinical technical demonstrations. Educational visualization only." />
+  <meta name="theme-color" content="#050709" />
+  <link rel="icon" type="image/png" href="/brand/phaos-mark.png" />
   <meta name="referrer" content="no-referrer" />
   <link rel="stylesheet" href="/src/styles.css" />
 </head>
@@ -13,11 +15,16 @@
   <a class="skip-link" href="#workspace">Skip to imaging workspace</a>
   <div id="app">
     <header class="topbar">
-      <div class="brand">SCAN//SPACE <span>VISUALIZATION WORKSTATION</span></div>
+      <div class="brand" aria-label="PHAOS Educational Imaging">
+        <img class="brand-logo" src="/brand/phaos-logo-cropped.png" alt="PHAOS" />
+        <span class="brand-tag">EDUCATIONAL IMAGING</span>
+        <b id="brandName" class="visually-hidden">PHAOS</b>
+      </div>
       <div class="study-id"><b id="studyType">NO STUDY</b><i>/</i><span id="studyRegion">WAITING FOR INPUT</span></div>
       <nav class="top-links" aria-label="Application">
+        <button id="audienceButton" class="mode-badge" type="button" title="Change educational experience">EXPLORE</button>
         <button id="newStudy" type="button" title="Clear the current in-memory study">NEW STUDY</button>
-        <button id="aboutButton" type="button">ABOUT · v1.3.0</button>
+        <button id="aboutButton" type="button">ABOUT · v1.5.0</button>
       </nav>
     </header>
 
@@ -42,6 +49,12 @@
           </div>
           <label class="control context-control"><span>ROI CONTEXT <output id="roiContextOut">0%</output></span><input id="roiContext" type="range" min="0" max="100" value="0" /></label>
         </div>
+      </section>
+      <section id="studyPanel" class="study-panel hidden">
+        <div class="section-title row"><span>STUDY MODE</span><em>EDUCATIONAL</em></div>
+        <p class="microcopy">Use real imaging to learn orientation, anatomy, spatial relationships, imaging planes, and modality-specific intensity behavior.</p>
+        <div class="study-actions"><button id="studyHideLabels" type="button">HIDE REFERENCE LABELS</button><button id="studyRevealLabels" type="button">REVEAL LABELS</button></div>
+        <p id="studyPrompt" class="study-prompt">Tip: hide labels, navigate the scan, then reveal the reference to check yourself.</p>
       </section>
       <section class="anatomy-section">
         <div class="section-title row"><span>ANATOMICAL EXPLORER</span><em id="regionConfidence">NO STUDY</em></div>
@@ -126,7 +139,7 @@
 
     <aside class="right-panel panel">
       <section class="volume-only">
-        <div class="section-title row"><span>WORKSTATION</span><em>MPR</em></div>
+        <div class="section-title row"><span>IMAGING VIEWER</span><em>MPR</em></div>
         <div class="tool-grid compact-tools">
           <button id="mprToggle" class="tool"><b>⊞</b><span>4-UP MPR</span></button>
           <button id="cineToggle" class="tool"><b>▶</b><span>CINE</span></button>
@@ -181,22 +194,37 @@
       </section>
 
       <section class="safety">
-        <div class="section-title">MEDICAL SAFETY</div>
-        <p>This application visualizes medical imaging and predefined anatomical references. It is not intended for diagnosis, triage, treatment decisions, or primary clinical interpretation.</p>
-        <p class="microcopy"><a href="/intended-use.html" target="_blank" rel="noreferrer">INTENDED USE</a> · <a href="/privacy.html" target="_blank" rel="noreferrer">PRIVACY</a> · <a href="/terms.html" target="_blank" rel="noreferrer">TERMS</a> · <a href="/accessibility.html" target="_blank" rel="noreferrer">ACCESSIBILITY</a></p>
-        <div><span></span>INTERPRETATION DISABLED</div>
+        <div class="section-title">EDUCATIONAL USE</div>
+        <p>This application is a supplemental educational visualization resource. It is not intended for diagnosis, triage, treatment, treatment planning, clinical decision-making, patient monitoring, equipment calibration, acceptance testing, or primary clinical interpretation.</p>
+        <p class="microcopy"><a href="/intended-use.html" target="_blank" rel="noreferrer">INTENDED USE</a> · <a href="/privacy.html" target="_blank" rel="noreferrer">PRIVACY</a> · <a href="/terms.html" target="_blank" rel="noreferrer">TERMS</a> · <a href="/partner-use.html" target="_blank" rel="noreferrer">PARTNER USE</a> · <a href="/accessibility.html" target="_blank" rel="noreferrer">ACCESSIBILITY</a></p>
+        <div><span></span>NON-DIAGNOSTIC EDUCATIONAL VIEWER</div>
       </section>
     </aside>
   </div>
   <div id="aboutModal" class="about-modal hidden" role="dialog" aria-modal="true" aria-labelledby="aboutTitle">
-    <div class="about-card"><header><b id="aboutTitle">SCAN//SPACE 1.3.0</b><button id="closeAbout" type="button" aria-label="Close About dialog">×</button></header>
-      <p><b>Build:</b> Launch Hardening · <b>Cornerstone:</b> 5.8.2 · <b>VTK:</b> 36.4.1</p>
-      <p>Local-first visualization and educational workstation. Medical image files are processed in this browser session. No analytics or crash-reporting service is included.</p>
-      <p><b>Not for diagnosis, triage, treatment decisions, or primary clinical interpretation.</b> Anatomy matching and isolation are reference-based unless a patient-specific segmentation is explicitly supplied.</p>
-      <div id="runtimeDiagnostics" class="runtime-diagnostics">Runtime diagnostics available after opening this panel.</div><button id="copyDiagnostics" class="copy-diagnostics" type="button">COPY PHI-SAFE DIAGNOSTICS</button><div class="about-links"><a href="/privacy.html" target="_blank" rel="noreferrer">Privacy</a><a href="/intended-use.html" target="_blank" rel="noreferrer">Intended use</a><a href="/terms.html" target="_blank" rel="noreferrer">Terms</a><a href="/accessibility.html" target="_blank" rel="noreferrer">Accessibility</a></div>
+    <div class="about-card"><header><div class="about-brand"><img src="/brand/phaos-logo-cropped.png" alt="PHAOS" /><b id="aboutTitle">PHAOS 1.5.0</b></div><button id="closeAbout" type="button" aria-label="Close About dialog">×</button></header>
+      <p><b>Build:</b> Explore · Study · Demo · <b>Cornerstone:</b> 5.8.2 · <b>VTK:</b> 36.4.1</p>
+      <p>Local-first educational medical-imaging viewer for the public, health-science students, and non-clinical partner demonstrations. Medical image files are processed in this browser session. No analytics or crash-reporting service is included.</p>
+      <p><b>Not for diagnosis, treatment, clinical decision-making, equipment quality-control certification, calibration, or primary clinical interpretation.</b> Anatomy matching and isolation are educational reference features and are not patient-specific detection.</p>
+      <div id="runtimeDiagnostics" class="runtime-diagnostics">Runtime diagnostics available after opening this panel.</div><button id="copyDiagnostics" class="copy-diagnostics" type="button">COPY PHI-SAFE DIAGNOSTICS</button><div class="about-links"><a href="/privacy.html" target="_blank" rel="noreferrer">Privacy</a><a href="/intended-use.html" target="_blank" rel="noreferrer">Intended use</a><a href="/terms.html" target="_blank" rel="noreferrer">Terms</a><a href="/partner-use.html" target="_blank" rel="noreferrer">Partner use</a><a href="/accessibility.html" target="_blank" rel="noreferrer">Accessibility</a></div>
     </div>
   </div>
   <div id="seriesChooser" class="series-chooser hidden"><div class="series-modal"><header><b>SELECT DICOM SERIES</b><span>Choose which series to explore</span></header><div id="seriesList" class="series-list"></div></div></div>
+
+  <div id="audienceModal" class="audience-modal" role="dialog" aria-modal="true" aria-labelledby="audienceTitle">
+    <div class="audience-card">
+      <header><div class="audience-branding"><img src="/brand/phaos-logo-cropped.png" alt="PHAOS" /><div><small>EDUCATIONAL MEDICAL IMAGING</small><h2 id="audienceTitle">HOW ARE YOU USING PHAOS?</h2></div></div></header>
+      <p class="audience-intro">Choose an experience. All PHAOS modes use the same imaging engine and are for visualization, education, and demonstration only — not diagnosis or clinical decision-making.</p>
+      <div class="audience-grid">
+        <button type="button" data-audience="explore"><b>EXPLORE</b><span>For the public</span><small>Explore your imaging visually and learn how slices, anatomy, and 3D space relate.</small></button>
+        <button type="button" data-audience="study"><b>STUDY</b><span>For medical &amp; health-science students</span><small>Learn anatomy, planes, orientation, CT windows, voxel values, and spatial relationships using imaging data.</small></button>
+        <button type="button" data-audience="demo"><b>DEMO</b><span>For imaging partners &amp; their clients</span><small>Visualize scanner-generated DICOM for education, product demonstrations, and non-clinical interoperability exploration.</small></button>
+      </div>
+      <div class="audience-boundary"><b>NOT FOR:</b> diagnosis · treatment · clinical decisions · primary interpretation · device calibration · acceptance testing · quality-control certification</div>
+      <p class="audience-foot">If you are viewing your own medical images, use the official radiology report and an appropriate healthcare professional for medical interpretation.</p>
+    </div>
+  </div>
+  <div id="partnerBanner" class="partner-banner hidden" role="note">DEMO MODE · SUPPLEMENTAL EDUCATIONAL / TECHNICAL VISUALIZATION · NOT DEVICE QA, CALIBRATION, OR DIAGNOSTIC INTERPRETATION</div>
   <script type="module" src="/src/main.js"></script>
 </body>
 </html>
