@@ -44,3 +44,20 @@ button,label{user-select:none}
 .upload-actions .upload-button:hover{border-color:var(--ink)}
 .upload-actions .upload-button.primary{background:var(--ink);border-color:var(--ink);color:var(--bg)}
 #fileInput,#folderInput{position:absolute!important;width:1px!important;height:1px!important;padding:0!important;margin:-1px!important;overflow:hidden!important;clip:rect(0,0,0,0)!important;white-space:nowrap!important;border:0!important;opacity:0!important;pointer-events:none!important}
+
+/* Anatomy search + isolation */
+.anatomy-results{margin-top:6px;border:1px solid var(--line);background:#070a0d;max-height:220px;overflow:auto;box-shadow:0 12px 34px var(--shadow)}
+.anatomy-result{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;border:0;border-bottom:1px solid var(--line2);background:transparent;color:var(--ink);padding:8px 9px;text-align:left;cursor:pointer;font-size:9px}
+.anatomy-result:last-child{border-bottom:0}.anatomy-result:hover{background:#0e1419}.anatomy-result small{color:var(--muted);font-size:7px;letter-spacing:.08em;text-transform:uppercase}
+.anatomy-selection{margin-top:10px;border:1px solid var(--line);padding:9px;background:#070a0d}.selection-head{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:9px;font-weight:800;letter-spacing:.06em}.selection-head em{font-style:normal;color:var(--cold);font-size:7px;border:1px solid rgba(53,168,255,.38);padding:3px 4px}.anatomy-selection p{font-family:Inter,system-ui,sans-serif;color:var(--muted);font-size:8px;line-height:1.45;margin:7px 0 9px}.selection-actions{display:grid;grid-template-columns:1fr 1.2fr .8fr;gap:5px}.selection-actions button{border:1px solid var(--line);background:transparent;color:var(--ink);font-size:7px;padding:7px 4px;cursor:pointer}.selection-actions button:hover{border-color:var(--ink)}.selection-actions button.primary{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.anatomy-item.active{border-color:var(--cold);box-shadow:inset 0 -2px 0 var(--cold)}
+.anatomy-focus circle,.anatomy-focus line{fill:none;stroke:var(--yellow);stroke-width:1.2}.anatomy-focus text{fill:var(--yellow);font-size:9px;font-weight:800;letter-spacing:.06em}
+
+/* Slice / 3D workspace switching */
+.slice-head-actions{display:flex;align-items:center;gap:7px}.slice-head-actions button{width:24px;height:21px;border:1px solid var(--line);background:transparent;color:var(--muted);font-size:10px;cursor:pointer;line-height:1}.slice-head-actions button:hover{color:var(--ink);border-color:var(--ink)}
+.workspace.slice-minimized .slice-dock{height:31px;grid-template-rows:31px;overflow:hidden}.workspace.slice-minimized .slice-dock .slice-viewport,.workspace.slice-minimized .slice-dock footer{display:none}.workspace.slice-minimized #minimizeSlice{color:var(--green)}
+.workspace.slice-primary .slice-dock{left:14px;top:14px;right:14px;bottom:14px;width:auto;height:auto;z-index:11;box-shadow:none}
+.workspace.slice-primary .volume-viewport{inset:auto 20px 20px auto;width:min(360px,38%);height:min(315px,41%);z-index:15;border:1px solid var(--line);background:#040607;box-shadow:0 14px 44px var(--shadow)}
+.workspace.slice-primary .world-overlay{inset:auto 20px 20px auto;width:min(360px,38%);height:min(315px,41%);z-index:16}
+.workspace.slice-primary .hud{z-index:17}.workspace.slice-primary .grid-overlay{z-index:3}
+.workspace.slice-primary.slice-minimized .slice-dock{left:auto;top:auto;right:15px;bottom:15px;width:min(360px,40%);height:31px}

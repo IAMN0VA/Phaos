@@ -83,6 +83,14 @@ const els = {
   metadataList: $('#metadataList'),
   anatomyTree: $('#anatomyTree'),
   anatomySearch: $('#anatomySearch'),
+  anatomyResults: $('#anatomyResults'),
+  anatomySelection: $('#anatomySelection'),
+  selectedAnatomy: $('#selectedAnatomy'),
+  selectionMode: $('#selectionMode'),
+  selectionDetail: $('#selectionDetail'),
+  focusAnatomy: $('#focusAnatomy'),
+  isolateAnatomy: $('#isolateAnatomy'),
+  resetIsolation: $('#resetIsolation'),
   notice: $('#modeNotice'),
   toast: $('#toast'),
   hud: $('#hud'),
@@ -103,6 +111,8 @@ const els = {
   sliceOut: $('#sliceOut'),
   sliceTitle: $('#sliceTitle'),
   sliceIndexLabel: $('#sliceCounter'),
+  swapViews: $('#swapViews'),
+  minimizeSlice: $('#minimizeSlice'),
   measureReadout: $('#toolStatus'),
   splicerToggle: $('#splicerToggle'),
   axisToggle: $('#axisToggle'),
@@ -115,6 +125,7 @@ const els = {
   axisGroup: $('#axisGroup'),
   axisX: $('#axisX'), axisY: $('#axisY'), axisZ: $('#axisZ'),
   axisXLabel: $('#axisXLabel'), axisYLabel: $('#axisYLabel'), axisZLabel: $('#axisZLabel'),
+  anatomyFocusGroup: $('#anatomyFocusGroup'), anatomyFocusLabel: $('#anatomyFocusLabel'),
 };
 
 const VIEWPORT_MAIN = 'SCANSPACE_MAIN';
@@ -140,7 +151,11 @@ const state = {
   contrast: 1,
   brightness: 0,
   threshold: .18,
-  density: 1,
+  density: .80,
+  interactiveQuality: false,
+  qualityRestoreTimer: 0,
+  visualRAF: 0,
+  sliceJumpTimer: 0,
   opacity: .92,
   plane: 'axial',
   showPlane: true,
@@ -153,27 +168,109 @@ const state = {
   overlayRAF: 0,
   loadToken: 0,
   imageGeometry: null,
+  selectedAnatomy: null,
+  selectedAnatomyWorld: null,
+  isolationActive: false,
+  isolationBounds: null,
+  slicePrimary: false,
+  sliceMinimized: false,
 };
 
-const anatomyMaps = {
-  BRAIN: { CRANIAL:['Brain','Ventricles','Cerebellum','Brainstem'], VASCULAR:['Circle of Willis','Major vessels'], REFERENCE:['Skull','Sinuses'] },
-  SKULL: { CRANIAL:['Skull','Brain','Sinuses'], DENTAL:['Teeth','Jaw','Mandible','Maxilla'], FACIAL:['Orbits','Nasal cavity'], NECK:['C1','C2','C3','C4','C5','C6','C7'] },
-  NECK: { SPINE:['C1','C2','C3','C4','C5','C6','C7'], SOFT_TISSUE:['Trachea','Thyroid','Esophagus'], VASCULAR:['Carotid arteries','Jugular veins'] },
-  CHEST: { THORACIC:['Lungs','Heart','Trachea','Esophagus'], VASCULAR:['Aorta','Pulmonary vessels'], SKELETAL:['Ribs','Sternum','Thoracic spine'] },
-  ABDOMEN: { ABDOMINAL:['Liver','Spleen','Stomach','Pancreas','Gallbladder','Appendix','Intestines'], VASCULAR:['Aorta','Major vessels'], URINARY:['Kidneys','Bladder'] },
-  PELVIS: { PELVIC:['Bladder','Rectum','Pelvic floor'], VASCULAR:['Iliac vessels'], SKELETAL:['Pelvis','Sacrum','Hip joints'] },
-  EXTREMITY: { SKELETAL:['Bone','Joint'], SOFT_TISSUE:['Muscle','Tendon','Subcutaneous tissue'] },
-  UNKNOWN: { REFERENCE:['Center of study','Superior','Inferior','Left','Right'] },
-};
+const ANATOMY_CATALOG = [
+  // Brain / cranial
+  {name:'Brain',group:'CRANIAL',regions:['BRAIN','SKULL'],aliases:['cerebrum','intracranial'],center:[.50,.49,.53],size:[.64,.70,.68]},
+  {name:'Frontal lobe',group:'BRAIN LOBES',regions:['BRAIN'],aliases:['frontal cortex'],center:[.50,.34,.63],size:[.52,.34,.40]},
+  {name:'Parietal lobe',group:'BRAIN LOBES',regions:['BRAIN'],aliases:['parietal cortex'],center:[.50,.43,.76],size:[.54,.34,.32]},
+  {name:'Temporal lobes',group:'BRAIN LOBES',regions:['BRAIN'],aliases:['temporal lobe'],center:[.50,.58,.50],size:[.74,.32,.34]},
+  {name:'Occipital lobe',group:'BRAIN LOBES',regions:['BRAIN'],aliases:['occipital cortex'],center:[.50,.69,.55],size:[.48,.26,.34]},
+  {name:'Ventricles',group:'CRANIAL',regions:['BRAIN'],aliases:['lateral ventricles','ventricular system'],center:[.50,.48,.53],size:[.24,.25,.24]},
+  {name:'Cerebellum',group:'CRANIAL',regions:['BRAIN','SKULL'],aliases:['posterior fossa'],center:[.50,.70,.30],size:[.44,.30,.28]},
+  {name:'Brainstem',group:'CRANIAL',regions:['BRAIN','SKULL'],aliases:['brain stem','pons','medulla'],center:[.50,.61,.35],size:[.20,.28,.32]},
+  {name:'Pituitary region',group:'CRANIAL',regions:['BRAIN','SKULL'],aliases:['pituitary','sella','sella turcica'],center:[.50,.54,.49],size:[.16,.15,.14]},
+  {name:'Circle of Willis',group:'VASCULAR',regions:['BRAIN'],aliases:['willis circle','intracranial arteries'],center:[.50,.53,.46],size:[.26,.22,.16]},
+  {name:'Skull',group:'CRANIAL',regions:['BRAIN','SKULL'],aliases:['calvarium','cranium'],center:[.50,.50,.52],size:[.94,.94,.94]},
+  {name:'Orbits',group:'FACIAL',regions:['SKULL','BRAIN'],aliases:['eye sockets','orbit'],center:[.50,.35,.55],size:[.55,.24,.22]},
+  {name:'Sinuses',group:'FACIAL',regions:['SKULL','BRAIN'],aliases:['paranasal sinuses','frontal sinus','maxillary sinus'],center:[.50,.39,.45],size:[.54,.32,.34]},
+  {name:'Nasal cavity',group:'FACIAL',regions:['SKULL'],aliases:['nose cavity'],center:[.50,.43,.38],size:[.22,.26,.30]},
+  {name:'Mandible',group:'DENTAL',regions:['SKULL'],aliases:['lower jaw','jawbone'],center:[.50,.64,.23],size:[.66,.31,.26]},
+  {name:'Maxilla',group:'DENTAL',regions:['SKULL'],aliases:['upper jaw'],center:[.50,.48,.39],size:[.58,.28,.22]},
+  {name:'Teeth',group:'DENTAL',regions:['SKULL'],aliases:['dentition','tooth'],center:[.50,.58,.32],size:[.62,.25,.20]},
 
-const referencePositions = {
-  brain:.52, ventricles:.52, cerebellum:.28, brainstem:.36, skull:.50, sinuses:.66,
-  c1:.82, c2:.74, c3:.64, c4:.54, c5:.44, c6:.34, c7:.24,
-  liver:.60, spleen:.59, stomach:.62, pancreas:.53, gallbladder:.57, appendix:.28, intestines:.40,
-  aorta:.48, 'major vessels':.50, kidneys:.49, 'left kidney':.50, 'right kidney':.50, bladder:.18,
-  lungs:.58, heart:.42, trachea:.64, ribs:.53, sternum:.52,
-  mandible:.27, maxilla:.50, teeth:.45, jaw:.35,
-};
+  // Cervical neck
+  {name:'C1',group:'CERVICAL SPINE',regions:['NECK','SKULL'],aliases:['atlas','c1 vertebra'],center:[.50,.51,.84],size:[.30,.25,.12]},
+  {name:'C2',group:'CERVICAL SPINE',regions:['NECK','SKULL'],aliases:['axis','c2 vertebra'],center:[.50,.51,.75],size:[.30,.25,.12]},
+  {name:'C3',group:'CERVICAL SPINE',regions:['NECK'],aliases:['c3 vertebra'],center:[.50,.51,.65],size:[.30,.25,.12]},
+  {name:'C4',group:'CERVICAL SPINE',regions:['NECK'],aliases:['c4 vertebra'],center:[.50,.51,.55],size:[.30,.25,.12]},
+  {name:'C5',group:'CERVICAL SPINE',regions:['NECK'],aliases:['c5 vertebra'],center:[.50,.51,.45],size:[.30,.25,.12]},
+  {name:'C6',group:'CERVICAL SPINE',regions:['NECK'],aliases:['c6 vertebra'],center:[.50,.51,.35],size:[.30,.25,.12]},
+  {name:'C7',group:'CERVICAL SPINE',regions:['NECK'],aliases:['c7 vertebra','vertebra prominens'],center:[.50,.51,.24],size:[.32,.27,.13]},
+  {name:'Cervical spinal canal',group:'CERVICAL SPINE',regions:['NECK'],aliases:['spinal canal','cervical canal'],center:[.50,.53,.51],size:[.18,.20,.72]},
+  {name:'Thyroid',group:'SOFT TISSUE',regions:['NECK'],aliases:['thyroid gland'],center:[.50,.52,.37],size:[.42,.24,.24]},
+  {name:'Trachea',group:'AIRWAY',regions:['NECK','CHEST'],aliases:['windpipe','airway'],center:[.50,.46,.52],size:[.18,.18,.70]},
+  {name:'Esophagus',group:'SOFT TISSUE',regions:['NECK','CHEST'],aliases:['oesophagus'],center:[.50,.56,.50],size:[.16,.16,.68]},
+  {name:'Carotid arteries',group:'VASCULAR',regions:['NECK'],aliases:['carotids','common carotid','internal carotid'],center:[.50,.49,.52],size:[.56,.26,.76]},
+  {name:'Jugular veins',group:'VASCULAR',regions:['NECK'],aliases:['jugulars','internal jugular vein'],center:[.50,.48,.52],size:[.66,.28,.76]},
+
+  // Chest / thorax
+  {name:'Lungs',group:'THORACIC',regions:['CHEST'],aliases:['lung','pulmonary'],center:[.50,.46,.55],size:[.90,.68,.78]},
+  {name:'Right lung',group:'THORACIC',regions:['CHEST'],aliases:['right pulmonary'],center:[.66,.45,.55],size:[.40,.64,.76]},
+  {name:'Left lung',group:'THORACIC',regions:['CHEST'],aliases:['left pulmonary'],center:[.34,.45,.55],size:[.40,.64,.76]},
+  {name:'Heart',group:'THORACIC',regions:['CHEST'],aliases:['cardiac','myocardium'],center:[.47,.58,.44],size:[.46,.42,.42]},
+  {name:'Aorta',group:'VASCULAR',regions:['CHEST','ABDOMEN'],aliases:['aortic arch','descending aorta','abdominal aorta'],center:[.50,.52,.50],size:[.24,.26,.78]},
+  {name:'Pulmonary arteries',group:'VASCULAR',regions:['CHEST'],aliases:['pulmonary artery','pulmonary vessels'],center:[.50,.50,.50],size:[.52,.32,.30]},
+  {name:'Superior vena cava',group:'VASCULAR',regions:['CHEST'],aliases:['svc'],center:[.42,.47,.66],size:[.18,.18,.34]},
+  {name:'Inferior vena cava',group:'VASCULAR',regions:['CHEST','ABDOMEN'],aliases:['ivc'],center:[.43,.52,.45],size:[.18,.18,.72]},
+  {name:'Sternum',group:'SKELETAL',regions:['CHEST'],aliases:['breastbone'],center:[.50,.25,.50],size:[.22,.16,.72]},
+  {name:'Ribs',group:'SKELETAL',regions:['CHEST'],aliases:['rib cage','costal'],center:[.50,.47,.53],size:[.96,.82,.82]},
+  {name:'Thoracic spine',group:'SKELETAL',regions:['CHEST'],aliases:['t spine','thoracic vertebrae'],center:[.50,.73,.50],size:[.26,.22,.84]},
+  {name:'LAD coronary artery',group:'CORONARY',regions:['CHEST'],aliases:['lad','left anterior descending','anterior interventricular artery'],center:[.48,.55,.47],size:[.22,.22,.28]},
+
+  // Abdomen
+  {name:'Liver',group:'ABDOMINAL',regions:['ABDOMEN'],aliases:['hepatic','hepatic parenchyma'],center:[.68,.46,.60],size:[.52,.48,.48]},
+  {name:'Spleen',group:'ABDOMINAL',regions:['ABDOMEN'],aliases:['splenic'],center:[.25,.43,.60],size:[.28,.28,.36]},
+  {name:'Stomach',group:'ABDOMINAL',regions:['ABDOMEN'],aliases:['gastric'],center:[.42,.47,.58],size:[.36,.34,.32]},
+  {name:'Pancreas',group:'ABDOMINAL',regions:['ABDOMEN'],aliases:['pancreatic'],center:[.47,.52,.51],size:[.46,.20,.18]},
+  {name:'Gallbladder',group:'ABDOMINAL',regions:['ABDOMEN'],aliases:['gall bladder','biliary'],center:[.62,.52,.54],size:[.18,.18,.20]},
+  {name:'Small intestine',group:'BOWEL',regions:['ABDOMEN'],aliases:['small bowel','jejunum','ileum'],center:[.50,.60,.39],size:[.64,.58,.52]},
+  {name:'Colon',group:'BOWEL',regions:['ABDOMEN','PELVIS'],aliases:['large bowel','large intestine'],center:[.50,.58,.42],size:[.80,.62,.62]},
+  {name:'Appendix',group:'BOWEL',regions:['ABDOMEN','PELVIS'],aliases:['vermiform appendix'],center:[.68,.68,.24],size:[.22,.22,.24]},
+  {name:'Right kidney',group:'URINARY',regions:['ABDOMEN'],aliases:['right renal','kidney right'],center:[.69,.54,.47],size:[.28,.26,.36]},
+  {name:'Left kidney',group:'URINARY',regions:['ABDOMEN'],aliases:['left renal','kidney left'],center:[.29,.52,.49],size:[.28,.26,.36]},
+  {name:'Kidneys',group:'URINARY',regions:['ABDOMEN'],aliases:['renal','both kidneys'],center:[.50,.53,.49],size:[.72,.30,.40]},
+  {name:'Adrenal glands',group:'ENDOCRINE',regions:['ABDOMEN'],aliases:['adrenals','suprarenal glands'],center:[.50,.48,.62],size:[.64,.22,.22]},
+  {name:'Abdominal aorta',group:'VASCULAR',regions:['ABDOMEN'],aliases:['aorta abdomen'],center:[.50,.50,.48],size:[.17,.18,.68]},
+  {name:'Lumbar spine',group:'SKELETAL',regions:['ABDOMEN','PELVIS'],aliases:['l spine','lumbar vertebrae'],center:[.50,.74,.46],size:[.28,.24,.70]},
+
+  // Pelvis
+  {name:'Bladder',group:'PELVIC',regions:['PELVIS','ABDOMEN'],aliases:['urinary bladder'],center:[.50,.62,.25],size:[.38,.34,.34]},
+  {name:'Rectum',group:'PELVIC',regions:['PELVIS'],aliases:['rectal'],center:[.50,.68,.32],size:[.22,.22,.42]},
+  {name:'Sacrum',group:'SKELETAL',regions:['PELVIS'],aliases:['sacral spine'],center:[.50,.71,.47],size:[.34,.26,.52]},
+  {name:'Pelvis',group:'SKELETAL',regions:['PELVIS'],aliases:['pelvic bones','bony pelvis'],center:[.50,.52,.49],size:[.94,.72,.72]},
+  {name:'Hip joints',group:'SKELETAL',regions:['PELVIS','EXTREMITY'],aliases:['hips','acetabulum','femoral heads'],center:[.50,.58,.43],size:[.92,.38,.36]},
+  {name:'Iliac vessels',group:'VASCULAR',regions:['PELVIS'],aliases:['iliac arteries','iliac veins'],center:[.50,.50,.42],size:[.68,.26,.48]},
+  {name:'Prostate region',group:'PELVIC',regions:['PELVIS'],aliases:['prostate'],center:[.50,.60,.30],size:[.28,.24,.22]},
+  {name:'Uterine region',group:'PELVIC',regions:['PELVIS'],aliases:['uterus','uterine'],center:[.50,.58,.38],size:[.34,.30,.30]},
+
+  // Extremity general
+  {name:'Bone',group:'SKELETAL',regions:['EXTREMITY'],aliases:['cortex','cortical bone'],center:[.50,.50,.50],size:[.46,.46,.88]},
+  {name:'Joint',group:'SKELETAL',regions:['EXTREMITY'],aliases:['articulation'],center:[.50,.50,.50],size:[.62,.62,.40]},
+  {name:'Muscle',group:'SOFT TISSUE',regions:['EXTREMITY'],aliases:['musculature'],center:[.50,.50,.50],size:[.86,.86,.84]},
+  {name:'Tendon',group:'SOFT TISSUE',regions:['EXTREMITY'],aliases:['tendons'],center:[.50,.50,.50],size:[.46,.46,.70]},
+
+  // Generic navigators
+  {name:'Center of study',group:'REFERENCE',regions:['UNKNOWN'],aliases:['center','middle'],center:[.50,.50,.50],size:[.40,.40,.40]},
+  {name:'Superior',group:'REFERENCE',regions:['UNKNOWN'],aliases:['top','cranial'],center:[.50,.50,.82],size:[.65,.65,.25]},
+  {name:'Inferior',group:'REFERENCE',regions:['UNKNOWN'],aliases:['bottom','caudal'],center:[.50,.50,.18],size:[.65,.65,.25]},
+  {name:'Left',group:'REFERENCE',regions:['UNKNOWN'],aliases:['left side'],center:[.25,.50,.50],size:[.36,.70,.70]},
+  {name:'Right',group:'REFERENCE',regions:['UNKNOWN'],aliases:['right side'],center:[.75,.50,.50],size:[.36,.70,.70]},
+];
+
+const anatomyByName = new Map();
+for(const item of ANATOMY_CATALOG){
+  anatomyByName.set(item.name.toLowerCase(), item);
+  for(const alias of item.aliases || []) anatomyByName.set(alias.toLowerCase(), item);
+}
+
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const cross = (a,b) => [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
@@ -247,6 +344,16 @@ function resetRuntime(){
   state.volume = null;
   state.stackImageIds = [];
   state.imageGeometry = null;
+  state.selectedAnatomy = null;
+  state.selectedAnatomyWorld = null;
+  state.isolationActive = false;
+  state.isolationBounds = null;
+  state.slicePrimary = false;
+  state.sliceMinimized = false;
+  els.workspace.classList.remove('slice-primary','slice-minimized');
+  els.anatomySelection.classList.add('hidden');
+  els.anatomyResults.classList.add('hidden');
+  els.anatomySearch.value = '';
   annotation.state.removeAllAnnotations();
 }
 
@@ -687,9 +794,11 @@ function applyVisualization(forceVisible=false){
   const rangeSpan = Math.max(1e-6, upper-lower);
   const thresholdFraction = forceVisible ? Math.min(state.threshold, .08) : state.threshold;
   const threshold = lower + rangeSpan * thresholdFraction;
-  const sampleDistanceMultiplier = Math.max(.06, 1.30 - state.density * 1.24); // 100% ≈ .06, dense GPU ray sampling
-
-  try { main.setSampleDistanceMultiplier(sampleDistanceMultiplier); } catch (_) { try { main.setProperties({ sampleDistanceMultiplier }); } catch (_) {} }
+  // Keep final still quality high without making interaction unusably expensive.
+  // 100% quality now maps to ~0.35 instead of the previous ~0.06. During
+  // rotation/zoom we temporarily raise the multiplier further (fewer samples)
+  // and restore the selected quality when interaction stops.
+  applySampleQuality(state.interactiveQuality, false);
   try { slice.setProperties({ voiRange:{lower,upper} }); } catch (_) {}
 
   for(const [vp, isMain] of [[main,true],[slice,false]]){
@@ -724,7 +833,47 @@ function applyVisualization(forceVisible=false){
       }
     }
   }
-  state.engine.render();
+  try { state.engine.renderViewports([VIEWPORT_MAIN, VIEWPORT_SLICE]); } catch (_) { main.render(); slice.render(); }
+}
+
+function qualitySampleMultiplier(interactive=false){
+  // User quality 20–100% -> idle multiplier ~1.15–0.35. Larger multiplier =
+  // fewer ray samples / faster rendering. Interaction never renders denser
+  // than ~1.10, which keeps trackball rotation responsive on laptop GPUs.
+  const q = clamp(state.density, .20, 1);
+  const idle = 1.35 - q * 1.00;
+  return interactive ? Math.max(1.10, idle * 2.4) : Math.max(.35, idle);
+}
+
+function applySampleQuality(interactive=false, render=true){
+  if(state.mode !== 'volume' || !state.engine) return;
+  const main = state.engine.getViewport(VIEWPORT_MAIN);
+  if(!main) return;
+  const multiplier = qualitySampleMultiplier(interactive);
+  try { main.setSampleDistanceMultiplier(multiplier); }
+  catch (_) { try { main.setProperties({ sampleDistanceMultiplier: multiplier }); } catch (_) {} }
+  if(render){ try { state.engine.renderViewport(VIEWPORT_MAIN); } catch (_) { main.render(); } }
+}
+
+function setInteractiveQuality(active){
+  if(state.mode !== 'volume') return;
+  clearTimeout(state.qualityRestoreTimer);
+  state.interactiveQuality = active;
+  applySampleQuality(active, true);
+  if(active){
+    state.qualityRestoreTimer = setTimeout(() => {
+      state.interactiveQuality = false;
+      applySampleQuality(false, true);
+    }, 180);
+  }
+}
+
+function scheduleVisualization(){
+  if(state.visualRAF) return;
+  state.visualRAF = requestAnimationFrame(() => {
+    state.visualRAF = 0;
+    applyVisualization();
+  });
 }
 
 function addColorTransferPoints(cfun, low, high, mode){
@@ -784,15 +933,17 @@ function updateSliceUI(){
 
 function startOverlayLoop(){
   stopOverlayLoop();
+  // XYZ / Splicer overlays do not need 60 updates/sec. 20 fps is visually
+  // smooth enough and avoids repeated worldToCanvas work competing with VTK.
   const tick = () => {
     if(state.mode !== 'volume') return;
     updateSliceUI();
     drawWorldOverlay();
-    state.overlayRAF = requestAnimationFrame(tick);
+    state.overlayRAF = setTimeout(() => requestAnimationFrame(tick), 50);
   };
-  state.overlayRAF = requestAnimationFrame(tick);
+  state.overlayRAF = setTimeout(() => requestAnimationFrame(tick), 50);
 }
-function stopOverlayLoop(){ if(state.overlayRAF) cancelAnimationFrame(state.overlayRAF); state.overlayRAF = 0; }
+function stopOverlayLoop(){ if(state.overlayRAF) clearTimeout(state.overlayRAF); state.overlayRAF = 0; }
 
 function drawWorldOverlay(){
   if(state.mode !== 'volume') return;
@@ -840,6 +991,15 @@ function drawWorldOverlay(){
       els.axisGroup.style.display = '';
     } else els.axisGroup.style.display = 'none';
   } else els.axisGroup.style.display = 'none';
+
+  if(state.selectedAnatomyWorld && state.selectedAnatomy){
+    const p = main.worldToCanvas(state.selectedAnatomyWorld);
+    if(p?.length >= 2){
+      els.anatomyFocusGroup.classList.remove('hidden');
+      els.anatomyFocusGroup.setAttribute('transform', `translate(${p[0]} ${p[1]})`);
+      els.anatomyFocusLabel.textContent = state.isolationActive ? `${state.selectedAnatomy.name} · ROI` : state.selectedAnatomy.name;
+    } else els.anatomyFocusGroup.classList.add('hidden');
+  } else els.anatomyFocusGroup.classList.add('hidden');
 }
 function setLine(el,a,b){ el.setAttribute('x1',a[0]);el.setAttribute('y1',a[1]);el.setAttribute('x2',b[0]);el.setAttribute('y2',b[1]); }
 function setText(el,p,t){ el.setAttribute('x',p[0]+6);el.setAttribute('y',p[1]-6);el.textContent=t; }
@@ -893,25 +1053,214 @@ function updateMetadata(info){
   const rows = [['Modality',info.modality],['Series',info.series],['Dimensions',info.dimensions],['Voxel',info.voxel]];
   els.metadataList.innerHTML = rows.map(([k,v]) => `<div><dt>${escapeHtml(k)}</dt><dd title="${escapeHtml(v)}">${escapeHtml(v)}</dd></div>`).join('');
 }
+function catalogForRegion(region=state.region){
+  const exact = ANATOMY_CATALOG.filter(item => item.regions.includes(region));
+  if(exact.length) return exact;
+  return ANATOMY_CATALOG.filter(item => item.regions.includes('UNKNOWN'));
+}
+
 function updateAnatomy(){
-  const groups = anatomyMaps[state.region] || anatomyMaps.UNKNOWN;
-  els.anatomyTree.classList.remove('empty-tree');
-  els.anatomyTree.innerHTML = Object.entries(groups).map(([group,items]) => `
-    <div class="anatomy-group"><h3>${escapeHtml(group.replaceAll('_',' '))}</h3><div class="anatomy-items">
-    ${items.map(item => `<button class="anatomy-item" data-anatomy="${escapeHtml(item)}">${escapeHtml(item)}</button>`).join('')}
+  const items = catalogForRegion();
+  const groups = new Map();
+  for(const item of items){
+    if(!groups.has(item.group)) groups.set(item.group, []);
+    groups.get(item.group).push(item);
+  }
+  els.anatomyTree.classList.remove('empty');
+  els.anatomyTree.innerHTML = [...groups.entries()].map(([group,entries]) => `
+    <div class="anatomy-group"><h3>${escapeHtml(group)}</h3><div class="anatomy-items">
+    ${entries.map(item => `<button class="anatomy-item" data-anatomy="${escapeHtml(item.name)}">${escapeHtml(item.name)}</button>`).join('')}
     </div></div>`).join('');
-  $$('.anatomy-item').forEach(btn => btn.addEventListener('click', () => navigateReference(btn.dataset.anatomy)));
+  $$('.anatomy-item').forEach(btn => btn.addEventListener('click', () => {
+    const item = anatomyByName.get(btn.dataset.anatomy.toLowerCase());
+    if(item) selectAnatomy(item, { autoIsolate: state.mode === 'volume' });
+  }));
 }
 function escapeHtml(v){ return String(v ?? '').replace(/[&<>"']/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;' }[c])); }
 
-async function navigateReference(name){
-  if(state.mode === 'volume'){
-    await updateSlicePlane('axial', false);
-    const t = referencePositions[name.toLowerCase()] ?? .5;
-    els.slicePosition.value = Math.round(t*1000);
-    await jumpToSlider();
+function anatomySearchMatches(query){
+  const q = query.trim().toLowerCase();
+  if(!q) return [];
+  const scored = [];
+  for(const item of ANATOMY_CATALOG){
+    const names = [item.name, ...(item.aliases || [])].map(v => v.toLowerCase());
+    let score = 0;
+    if(names.some(v => v === q)) score = 100;
+    else if(item.name.toLowerCase().startsWith(q)) score = 80;
+    else if(names.some(v => v.startsWith(q))) score = 70;
+    else if(item.name.toLowerCase().includes(q)) score = 55;
+    else if(names.some(v => v.includes(q))) score = 45;
+    if(!score) continue;
+    if(item.regions.includes(state.region)) score += 20;
+    scored.push({ item, score });
   }
-  showToast(`${name}: anatomical reference only — not detected in this scan`, 4300);
+  return scored.sort((a,b) => b.score-a.score || a.item.name.localeCompare(b.item.name)).slice(0,14).map(x => x.item);
+}
+
+function renderAnatomyResults(query){
+  const matches = anatomySearchMatches(query);
+  if(!query.trim()){
+    els.anatomyResults.classList.add('hidden');
+    els.anatomyResults.innerHTML = '';
+    return;
+  }
+  els.anatomyResults.classList.remove('hidden');
+  if(!matches.length){
+    els.anatomyResults.innerHTML = '<div class="anatomy-result"><span>No reference match</span><small>TRY ANOTHER TERM</small></div>';
+    return;
+  }
+  els.anatomyResults.innerHTML = matches.map(item => `<button class="anatomy-result" data-anatomy="${escapeHtml(item.name)}"><span>${escapeHtml(item.name)}</span><small>${escapeHtml(item.group)} · ${escapeHtml(item.regions[0])}</small></button>`).join('');
+  $$('.anatomy-result[data-anatomy]').forEach(btn => btn.addEventListener('click', () => {
+    const item = anatomyByName.get(btn.dataset.anatomy.toLowerCase());
+    if(item){
+      els.anatomySearch.value = item.name;
+      els.anatomyResults.classList.add('hidden');
+      selectAnatomy(item, { autoIsolate: state.mode === 'volume' });
+    }
+  }));
+}
+
+function normalizedPointToWorld(normPoint){
+  const g = state.imageGeometry;
+  if(!g) return null;
+  let p = [...g.origin];
+  for(let i=0;i<3;i++) p = add(p, mul(g.axes[i], g.lengths[i] * clamp(normPoint[i],0,1)));
+  return p;
+}
+
+function anatomyWorldBounds(item){
+  if(!state.imageGeometry) return null;
+  const half = item.size.map(v => v/2);
+  const lo = item.center.map((v,i) => clamp(v-half[i],0,1));
+  const hi = item.center.map((v,i) => clamp(v+half[i],0,1));
+  const pts = [];
+  for(const x of [lo[0],hi[0]]) for(const y of [lo[1],hi[1]]) for(const z of [lo[2],hi[2]]) pts.push(normalizedPointToWorld([x,y,z]));
+  if(pts.some(p => !p)) return null;
+  const xs=pts.map(p=>p[0]), ys=pts.map(p=>p[1]), zs=pts.map(p=>p[2]);
+  return [Math.min(...xs),Math.max(...xs),Math.min(...ys),Math.max(...ys),Math.min(...zs),Math.max(...zs)];
+}
+
+function getMainActorMapper(){
+  if(state.mode !== 'volume' || !state.engine) return {};
+  const main = state.engine.getViewport(VIEWPORT_MAIN);
+  const actor = main?.getDefaultActor?.()?.actor;
+  return { main, actor, mapper: actor?.getMapper?.() };
+}
+
+function updateSelectionUI(item){
+  if(!item){
+    els.anatomySelection.classList.add('hidden');
+    return;
+  }
+  els.anatomySelection.classList.remove('hidden');
+  els.selectedAnatomy.textContent = item.name;
+  els.selectionMode.textContent = 'REFERENCE ROI';
+  const applicable = item.regions.includes(state.region) || state.region === 'UNKNOWN';
+  els.selectionDetail.textContent = !applicable
+    ? `This reference belongs to ${item.regions.join(' / ')} and is not mapped into the detected ${state.region} study.`
+    : state.mode === 'volume'
+      ? 'Reference location mapped into this scan volume. Cropping isolates the ROI, not an automatically segmented organ boundary.'
+      : 'Reference anatomy selected. Exact patient-structure isolation requires volumetric data and a segmentation mask.';
+  $$('.anatomy-item').forEach(btn => btn.classList.toggle('active', btn.dataset.anatomy?.toLowerCase() === item.name.toLowerCase()));
+}
+
+async function selectAnatomy(item, { autoIsolate=false }={}){
+  state.selectedAnatomy = item;
+  const applicable = item.regions.includes(state.region) || state.region === 'UNKNOWN';
+  state.selectedAnatomyWorld = applicable ? normalizedPointToWorld(item.center) : null;
+  updateSelectionUI(item);
+  if(!applicable){
+    showToast(`${item.name} is outside the detected ${state.region} study region`, 3600);
+    return;
+  }
+  if(state.mode === 'volume'){
+    await focusSelectedAnatomy();
+    if(autoIsolate) isolateSelectedAnatomy();
+  } else {
+    showToast(`${item.name}: reference selected · exact structure detection is not enabled`, 3600);
+  }
+}
+
+async function focusSelectedAnatomy(){
+  const item = state.selectedAnatomy;
+  if(!item || state.mode !== 'volume') return;
+  const world = normalizedPointToWorld(item.center);
+  if(!world) return;
+  state.selectedAnatomyWorld = world;
+
+  // Put the synchronized slice at the selected superior/inferior reference.
+  await updateSlicePlane('axial', false);
+  const t = clamp(item.center[2],0,1);
+  els.slicePosition.value = Math.round(t*1000);
+  await jumpToSlider();
+
+  // Re-center the 3D camera without changing the user's viewing direction.
+  const { main } = getMainActorMapper();
+  const cam = main?.getCamera?.();
+  if(main && cam?.position && cam?.focalPoint){
+    const delta = [world[0]-cam.focalPoint[0], world[1]-cam.focalPoint[1], world[2]-cam.focalPoint[2]];
+    const pos = [cam.position[0]+delta[0],cam.position[1]+delta[1],cam.position[2]+delta[2]];
+    try { main.setCamera({ focalPoint:world, position:pos }); } catch (_) {}
+    try { main.render(); } catch (_) {}
+  }
+  drawWorldOverlay();
+  showToast(`${item.name} · reference focus`, 2200);
+}
+
+function isolateSelectedAnatomy(){
+  const item = state.selectedAnatomy;
+  if(!item || state.mode !== 'volume') return;
+  const bounds = anatomyWorldBounds(item);
+  const { main, mapper } = getMainActorMapper();
+  if(!bounds || !mapper){
+    showToast('This volume does not expose a crop-capable 3D mapper.', 4200);
+    return;
+  }
+  try {
+    if(typeof mapper.setCropping === 'function') mapper.setCropping(true);
+    else if(typeof mapper.croppingOn === 'function') mapper.croppingOn();
+    else throw new Error('cropping API unavailable');
+
+    if(typeof mapper.setCroppingRegionPlanes === 'function'){
+      try { mapper.setCroppingRegionPlanes(...bounds); }
+      catch (_) { mapper.setCroppingRegionPlanes(bounds); }
+    } else {
+      throw new Error('cropping planes API unavailable');
+    }
+    if(typeof mapper.setCroppingRegionFlagsToSubVolume === 'function') mapper.setCroppingRegionFlagsToSubVolume();
+    state.isolationActive = true;
+    state.isolationBounds = bounds;
+    try { main.render(); } catch (_) { state.engine.renderViewport(VIEWPORT_MAIN); }
+    els.isolateAnatomy.textContent = 'ROI ISOLATED';
+    els.selectionMode.textContent = 'REFERENCE ROI';
+    setNotice(`${item.name}: the 3D render is cropped to a predefined anatomical reference ROI. This is spatial isolation, not patient-specific segmentation or diagnosis.`);
+    showToast(`${item.name} · reference ROI isolated`, 3000);
+  } catch (e) {
+    console.warn('SCAN//SPACE ROI crop unavailable', e);
+    showToast('ROI cropping is unavailable in this renderer; focus was preserved.', 4200);
+  }
+}
+
+function resetAnatomyIsolation({clearSelection=false}={}){
+  if(state.mode === 'volume'){
+    const { main, mapper } = getMainActorMapper();
+    try {
+      if(typeof mapper?.setCropping === 'function') mapper.setCropping(false);
+      else if(typeof mapper?.croppingOff === 'function') mapper.croppingOff();
+      main?.resetCamera?.();
+      main?.render?.();
+    } catch (e) { console.warn('Could not reset ROI cropping', e); }
+  }
+  state.isolationActive = false;
+  state.isolationBounds = null;
+  els.isolateAnatomy.textContent = 'ISOLATE ROI';
+  if(clearSelection){
+    state.selectedAnatomy = null;
+    state.selectedAnatomyWorld = null;
+    updateSelectionUI(null);
+  }
+  setNotice(state.mode === 'volume' ? 'Full volume restored. Anatomy references remain navigation aids unless a segmentation is available.' : '');
+  drawWorldOverlay();
 }
 
 function inferRegion(meta){
@@ -934,6 +1283,11 @@ function returnToEmpty(){
   els.worldOverlay.classList.add('hidden');
   els.studyType.textContent = 'NO STUDY';
   els.studyRegion.textContent = 'WAITING FOR INPUT';
+  els.confidenceLabel.textContent = 'NO STUDY';
+  els.anatomyTree.classList.add('empty');
+  els.anatomyTree.textContent = 'Upload a study to organize relevant anatomy.';
+  els.anatomySelection.classList.add('hidden');
+  els.anatomyResults.classList.add('hidden');
   startDust();
 }
 
@@ -1016,6 +1370,37 @@ function startDust(){
 }
 function stopDust(){ if(state.dustRAF)cancelAnimationFrame(state.dustRAF);state.dustRAF=0;const c=els.dustCanvas.getContext('2d');c.clearRect(0,0,els.dustCanvas.width,els.dustCanvas.height); }
 
+function applyWorkspaceLayout(){
+  els.workspace.classList.toggle('slice-primary', state.slicePrimary);
+  els.workspace.classList.toggle('slice-minimized', state.sliceMinimized);
+  els.swapViews.title = state.slicePrimary ? 'Restore 3D as main view' : 'Make slice the main view';
+  els.minimizeSlice.textContent = state.sliceMinimized ? '□' : '—';
+  els.minimizeSlice.title = state.sliceMinimized ? 'Restore slice' : 'Minimize slice';
+  requestAnimationFrame(() => {
+    try { state.engine?.resize(true, false); } catch (_) {}
+    try {
+      if(state.mode === 'volume') state.engine?.renderViewports([VIEWPORT_MAIN, VIEWPORT_SLICE]);
+      else state.engine?.renderViewport(VIEWPORT_MAIN);
+    } catch (_) { try { state.engine?.render(); } catch (_) {} }
+    resizeOverlay();
+    drawWorldOverlay();
+  });
+}
+
+function toggleSliceMinimize(){
+  if(state.mode !== 'volume') return;
+  state.sliceMinimized = !state.sliceMinimized;
+  if(state.sliceMinimized) state.slicePrimary = false;
+  applyWorkspaceLayout();
+}
+
+function toggleViewSwap(){
+  if(state.mode !== 'volume') return;
+  if(state.sliceMinimized) state.sliceMinimized = false;
+  state.slicePrimary = !state.slicePrimary;
+  applyWorkspaceLayout();
+}
+
 function resizeOverlay(){
   const r=els.volumeViewport.getBoundingClientRect(); els.worldOverlay.setAttribute('viewBox',`0 0 ${Math.max(1,r.width)} ${Math.max(1,r.height)}`);
   try { state.engine?.resize(true,true); } catch (_) {}
@@ -1042,20 +1427,56 @@ els.workspace.addEventListener('drop',e=>handleFiles([...e.dataTransfer.files]))
 $$('#colorMode button').forEach(btn=>btn.addEventListener('click',()=>{ $$('#colorMode button').forEach(x=>x.classList.toggle('active',x===btn));state.colorMode=btn.dataset.mode;applyVisualization(); }));
 $$('#planeMode button').forEach(btn=>btn.addEventListener('click',()=>updateSlicePlane(btn.dataset.plane,true)));
 
-function bindRange(el,out,fn,fmt){el.addEventListener('input',()=>{fn(+el.value);out.textContent=fmt(+el.value);applyVisualization();});}
+function bindRange(el,out,fn,fmt){
+  el.addEventListener('input',()=>{
+    fn(+el.value);
+    out.textContent=fmt(+el.value);
+    scheduleVisualization();
+  });
+}
 bindRange(els.contrast,els.contrastOut,v=>state.contrast=v/100,v=>`${v}%`);
 bindRange(els.brightness,els.brightnessOut,v=>state.brightness=v,v=>v>0?`+${v}`:`${v}`);
 bindRange(els.threshold,els.thresholdOut,v=>state.threshold=v/100,v=>`${v}%`);
-bindRange(els.density,els.densityOut,v=>state.density=v/100,v=>`${v}%`);
+// Quality only changes ray sampling; do not rebuild color/opacity transfer
+// functions or re-render the synchronized slice on every slider tick.
+els.density.addEventListener('input',()=>{
+  const v=+els.density.value; state.density=v/100; els.densityOut.textContent=`${v}%`;
+  applySampleQuality(false, true);
+});
 bindRange(els.opacity,els.opacityOut,v=>state.opacity=v/100,v=>`${v}%`);
-els.slicePosition.addEventListener('input',jumpToSlider);
+// Coalesce rapid slider events so old asynchronous slice jumps cannot queue.
+els.slicePosition.addEventListener('input',()=>{
+  clearTimeout(state.sliceJumpTimer);
+  state.sliceJumpTimer=setTimeout(jumpToSlider, 35);
+});
 els.splicerToggle.addEventListener('click',()=>{state.showPlane=!state.showPlane;els.splicerToggle.classList.toggle('active',state.showPlane);els.splicerToggle.setAttribute('aria-pressed',String(state.showPlane));drawWorldOverlay();});
 els.axisToggle.addEventListener('click',()=>{state.showAxes=!state.showAxes;els.axisToggle.classList.toggle('active',state.showAxes);els.axisToggle.setAttribute('aria-pressed',String(state.showAxes));drawWorldOverlay();});
 els.measureTool.addEventListener('click',()=>setAnnotationTool('measure'));
 els.markerTool.addEventListener('click',()=>setAnnotationTool('marker'));
 els.clearTools.addEventListener('click',()=>{annotation.state.removeAllAnnotations();state.engine?.render();showToast('Measurements and markers cleared');});
-els.resetView.addEventListener('click',()=>{if(!state.mode)return;const main=state.engine.getViewport(VIEWPORT_MAIN);main?.resetCamera();if(state.mode==='volume')state.engine.getViewport(VIEWPORT_SLICE)?.resetCamera();state.engine.render();});
-els.anatomySearch.addEventListener('keydown',e=>{if(e.key!=='Enter')return;const q=e.target.value.trim();if(!q)return;const all=Object.values(anatomyMaps[state.region]||anatomyMaps.UNKNOWN).flat();const hit=all.find(x=>x.toLowerCase()===q.toLowerCase())||all.find(x=>x.toLowerCase().includes(q.toLowerCase()));if(hit)navigateReference(hit);else showToast(`No predefined anatomy reference for “${q}”`,3200);});
+els.resetView.addEventListener('click',()=>{if(!state.mode)return;const main=state.engine.getViewport(VIEWPORT_MAIN);main?.resetCamera();if(state.mode==='volume')state.engine.getViewport(VIEWPORT_SLICE)?.resetCamera();try{state.engine.renderViewports(state.mode==='volume'?[VIEWPORT_MAIN,VIEWPORT_SLICE]:[VIEWPORT_MAIN]);}catch(_){state.engine.render();}});
+// Adaptive volume quality: coarse while the user rotates/zooms, selected
+// quality again almost immediately after interaction ends.
+els.volumeViewport.addEventListener('pointerdown',()=>setInteractiveQuality(true),{passive:true});
+window.addEventListener('pointerup',()=>{if(state.mode==='volume'){clearTimeout(state.qualityRestoreTimer);state.qualityRestoreTimer=setTimeout(()=>{state.interactiveQuality=false;applySampleQuality(false,true);},80);}}, {passive:true});
+els.volumeViewport.addEventListener('wheel',()=>setInteractiveQuality(true),{passive:true});
+els.anatomySearch.addEventListener('input', e => renderAnatomyResults(e.target.value));
+els.anatomySearch.addEventListener('keydown', e => {
+  if(e.key === 'Escape'){ els.anatomyResults.classList.add('hidden'); return; }
+  if(e.key !== 'Enter') return;
+  const hit = anatomySearchMatches(e.target.value)[0];
+  if(hit){
+    els.anatomyResults.classList.add('hidden');
+    selectAnatomy(hit, {autoIsolate:state.mode === 'volume'});
+  } else {
+    showToast(`No anatomical reference for “${e.target.value.trim()}”`, 3200);
+  }
+});
+els.focusAnatomy.addEventListener('click', focusSelectedAnatomy);
+els.isolateAnatomy.addEventListener('click', isolateSelectedAnatomy);
+els.resetIsolation.addEventListener('click', () => resetAnatomyIsolation());
+els.swapViews.addEventListener('click', toggleViewSwap);
+els.minimizeSlice.addEventListener('click', toggleSliceMinimize);
 
 // Start the visual shell immediately. Cornerstone is initialized lazily after the
 // user selects a study so a worker/WASM problem can never block the native file picker.

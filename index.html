@@ -18,8 +18,18 @@
     <aside class="left-panel panel">
       <section>
         <div class="section-title">ANATOMY SEARCH <em>REFERENCE</em></div>
-        <label class="terminal-input"><b>&gt;</b><input id="anatomySearch" placeholder="liver, C2, left kidney…" autocomplete="off" /></label>
-        <p class="microcopy">Navigates anatomical references. It does not claim a structure was detected in the scan.</p>
+        <label class="terminal-input"><b>&gt;</b><input id="anatomySearch" placeholder="Search anatomy, e.g. liver, C2, LAD…" autocomplete="off" /></label>
+        <div id="anatomyResults" class="anatomy-results hidden"></div>
+        <p class="microcopy">Searches the anatomical reference catalog and synonyms. Selecting a result can focus or crop the patient volume to a reference ROI; exact organ boundaries require a segmentation mask.</p>
+        <div id="anatomySelection" class="anatomy-selection hidden">
+          <div class="selection-head"><span id="selectedAnatomy">—</span><em id="selectionMode">REFERENCE ROI</em></div>
+          <p id="selectionDetail">Reference location only — not detected in this scan.</p>
+          <div class="selection-actions">
+            <button id="focusAnatomy">FOCUS</button>
+            <button id="isolateAnatomy" class="primary">ISOLATE ROI</button>
+            <button id="resetIsolation">RESET</button>
+          </div>
+        </div>
       </section>
       <section class="anatomy-section">
         <div class="section-title row"><span>ANATOMICAL EXPLORER</span><em id="regionConfidence">NO STUDY</em></div>
@@ -40,6 +50,12 @@
           <line id="axisX" class="axis x"/><text id="axisXLabel" class="axis-label x">X</text>
           <line id="axisY" class="axis y"/><text id="axisYLabel" class="axis-label y">Y</text>
           <line id="axisZ" class="axis z"/><text id="axisZLabel" class="axis-label z">Z</text>
+        </g>
+        <g id="anatomyFocusGroup" class="anatomy-focus hidden">
+          <circle id="anatomyFocusRing" r="13" />
+          <line id="anatomyFocusH" x1="-21" y1="0" x2="21" y2="0" />
+          <line id="anatomyFocusV" x1="0" y1="-21" x2="0" y2="21" />
+          <text id="anatomyFocusLabel" x="18" y="-16">ANATOMY</text>
         </g>
       </svg>
       <div class="grid-overlay"></div>
@@ -68,7 +84,14 @@
       </div>
 
       <section id="sliceDock" class="slice-dock hidden">
-        <header><span id="sliceTitle">AXIAL SLICE</span><span id="sliceCounter">—</span></header>
+        <header>
+          <span id="sliceTitle">AXIAL SLICE</span>
+          <div class="slice-head-actions">
+            <span id="sliceCounter">—</span>
+            <button id="swapViews" title="Swap slice and 3D view">⇄</button>
+            <button id="minimizeSlice" title="Minimize slice">—</button>
+          </div>
+        </header>
         <div id="sliceViewport" class="cornerstone-viewport slice-viewport"></div>
         <footer id="toolStatus">SPATIAL SLICE · NO DIAGNOSTIC INTERPRETATION</footer>
       </section>
@@ -86,7 +109,7 @@
         <label class="control"><span>CONTRAST <output id="contrastOut">100%</output></span><input id="contrast" type="range" min="40" max="220" value="100" /></label>
         <label class="control"><span>BRIGHTNESS <output id="brightnessOut">0</output></span><input id="brightness" type="range" min="-80" max="80" value="0" /></label>
         <label class="control volume-only"><span>VOLUME THRESHOLD <output id="thresholdOut">18%</output></span><input id="threshold" type="range" min="0" max="85" value="18" /></label>
-        <label class="control volume-only"><span>SCAN DENSITY / QUALITY <output id="densityOut">100%</output></span><input id="density" type="range" min="20" max="100" value="100" /></label>
+        <label class="control volume-only"><span>SCAN DENSITY / QUALITY <output id="densityOut">80%</output></span><input id="density" type="range" min="20" max="100" value="80" /></label>
         <label class="control volume-only"><span>VOLUME OPACITY <output id="opacityOut">90%</output></span><input id="opacity" type="range" min="10" max="100" value="90" /></label>
       </section>
 
