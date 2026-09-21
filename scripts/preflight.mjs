@@ -41,10 +41,18 @@ if (kindCount('muscle') < 70) failures.push(`Insufficient muscle references: ${k
 if (kindCount('tendon') < 25) failures.push(`Insufficient tendon references: ${kindCount('tendon')}`);
 if (kindCount('ligament') < 30) failures.push(`Insufficient ligament references: ${kindCount('ligament')}`);
 
+
+for (const phrase of ['id="newStudy"','id="aboutButton"','id="referenceBanner"','/privacy.html','/intended-use.html','/terms.html','/accessibility.html']) {
+  if (!html.includes(phrase)) failures.push(`Missing launch-hardening UI/content: ${phrase}`);
+}
+if (!js.includes('scanspace-safe-export-v1')) failures.push('PHI-minimized export schema missing');
+if (/Math\.round\(matches\[0\]\.score\)\/100/.test(js) || /Spatial match .*\/100/.test(js)) failures.push('Identify still exposes percentage-like confidence');
+if (css.includes('fonts.googleapis.com') || html.includes('fonts.googleapis.com')) failures.push('Third-party font request remains in production UI');
+if (!css.includes('prefers-reduced-motion')) failures.push('Reduced-motion CSS missing');
 if (failures.length) {
   console.error('SCAN//SPACE preflight FAILED');
   for (const f of failures) console.error(' -', f);
   process.exit(1);
 }
 console.log('SCAN//SPACE static preflight PASSED');
-console.log(`Checked ${new Set(requiredIds).size} DOM bindings, ${catalog.length} anatomy references, whole-body region coverage, production modes, dependencies, and deployment headers.`);
+console.log(`Checked ${new Set(requiredIds).size} DOM bindings, ${catalog.length} anatomy references, whole-body region coverage, production modes, dependencies, and deployment headers, safe export, accessibility hooks, and launch-hardening UI.`);

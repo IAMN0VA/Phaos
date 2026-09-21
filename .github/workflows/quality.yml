@@ -1,0 +1,21 @@
+name: quality
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Require committed lockfile
+        run: test -f package-lock.json || (echo 'package-lock.json is required for release branches' && exit 1)
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - run: npm run launch:check
+      - run: npm run build

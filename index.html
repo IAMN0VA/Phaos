@@ -4,14 +4,21 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="color-scheme" content="dark" />
-  <title>SCAN//SPACE</title>
+  <title>SCAN//SPACE — Local Medical Imaging Explorer</title>
+  <meta name="description" content="Privacy-first browser medical imaging visualization and educational workstation. Visualization only; not diagnostic." />
+  <meta name="referrer" content="no-referrer" />
   <link rel="stylesheet" href="/src/styles.css" />
 </head>
 <body>
+  <a class="skip-link" href="#workspace">Skip to imaging workspace</a>
   <div id="app">
     <header class="topbar">
-      <div class="brand">SCAN//SPACE <span>LOCAL MEDICAL IMAGING</span></div>
+      <div class="brand">SCAN//SPACE <span>VISUALIZATION WORKSTATION</span></div>
       <div class="study-id"><b id="studyType">NO STUDY</b><i>/</i><span id="studyRegion">WAITING FOR INPUT</span></div>
+      <nav class="top-links" aria-label="Application">
+        <button id="newStudy" type="button" title="Clear the current in-memory study">NEW STUDY</button>
+        <button id="aboutButton" type="button">ABOUT · v1.3.0</button>
+      </nav>
     </header>
 
     <aside class="left-panel panel">
@@ -50,7 +57,7 @@
       </section>
     </aside>
 
-    <main id="workspace" class="workspace">
+    <main id="workspace" class="workspace" tabindex="-1" aria-label="Medical imaging workspace">
       <canvas id="dustCanvas" class="dust-canvas"></canvas>
       <div id="volumeViewport" class="cornerstone-viewport volume-viewport"></div>
       <section id="mprSagittalDock" class="mpr-dock mpr-sag"><header><span>SAGITTAL</span><span class="orientation-note">L/R · S/I</span></header><div id="mprSagittal" class="cornerstone-viewport mpr-viewport"></div><div class="orientation-label top">S</div><div class="orientation-label bottom">I</div><div class="orientation-label left">P</div><div class="orientation-label right">A</div></section>
@@ -85,9 +92,10 @@
         <small>Files stay in this browser session. No medical image upload is required.</small>
       </div>
 
-      <div id="loading" class="loading hidden"><span></span><b id="loadingText">READING STUDY</b><small id="loadingDetail">Preparing local imaging pipeline…</small></div>
-      <div id="modeNotice" class="mode-notice hidden"></div>
-      <div id="toast" class="toast hidden"></div>
+      <div id="loading" class="loading hidden" role="status" aria-live="polite"><span></span><b id="loadingText">READING STUDY</b><small id="loadingDetail">Preparing local imaging pipeline…</small></div>
+      <div id="modeNotice" class="mode-notice hidden" role="status" aria-live="polite"></div>
+      <div id="referenceBanner" class="reference-banner hidden" role="note">ANATOMICAL REFERENCE — NOT PATIENT-SPECIFIC DETECTION OR SEGMENTATION</div>
+      <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 
       <div id="hud" class="hud hidden">
         <span id="hudMode">VOLUME</span>
@@ -174,10 +182,19 @@
 
       <section class="safety">
         <div class="section-title">MEDICAL SAFETY</div>
-        <p>This application visualizes imaging data and anatomical references. It does not diagnose, classify pathology, or replace a radiologist or physician.</p>
+        <p>This application visualizes medical imaging and predefined anatomical references. It is not intended for diagnosis, triage, treatment decisions, or primary clinical interpretation.</p>
+        <p class="microcopy"><a href="/intended-use.html" target="_blank" rel="noreferrer">INTENDED USE</a> · <a href="/privacy.html" target="_blank" rel="noreferrer">PRIVACY</a> · <a href="/terms.html" target="_blank" rel="noreferrer">TERMS</a> · <a href="/accessibility.html" target="_blank" rel="noreferrer">ACCESSIBILITY</a></p>
         <div><span></span>INTERPRETATION DISABLED</div>
       </section>
     </aside>
+  </div>
+  <div id="aboutModal" class="about-modal hidden" role="dialog" aria-modal="true" aria-labelledby="aboutTitle">
+    <div class="about-card"><header><b id="aboutTitle">SCAN//SPACE 1.3.0</b><button id="closeAbout" type="button" aria-label="Close About dialog">×</button></header>
+      <p><b>Build:</b> Launch Hardening · <b>Cornerstone:</b> 5.8.2 · <b>VTK:</b> 36.4.1</p>
+      <p>Local-first visualization and educational workstation. Medical image files are processed in this browser session. No analytics or crash-reporting service is included.</p>
+      <p><b>Not for diagnosis, triage, treatment decisions, or primary clinical interpretation.</b> Anatomy matching and isolation are reference-based unless a patient-specific segmentation is explicitly supplied.</p>
+      <div id="runtimeDiagnostics" class="runtime-diagnostics">Runtime diagnostics available after opening this panel.</div><button id="copyDiagnostics" class="copy-diagnostics" type="button">COPY PHI-SAFE DIAGNOSTICS</button><div class="about-links"><a href="/privacy.html" target="_blank" rel="noreferrer">Privacy</a><a href="/intended-use.html" target="_blank" rel="noreferrer">Intended use</a><a href="/terms.html" target="_blank" rel="noreferrer">Terms</a><a href="/accessibility.html" target="_blank" rel="noreferrer">Accessibility</a></div>
+    </div>
   </div>
   <div id="seriesChooser" class="series-chooser hidden"><div class="series-modal"><header><b>SELECT DICOM SERIES</b><span>Choose which series to explore</span></header><div id="seriesList" class="series-list"></div></div></div>
   <script type="module" src="/src/main.js"></script>

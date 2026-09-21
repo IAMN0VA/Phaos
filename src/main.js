@@ -1,4 +1,28 @@
 import { ANATOMY_CATALOG, anatomyMatchesRegion, REGION_LABELS } from './anatomyCatalog.js';
+import { distanceMm, hasCalibratedSpacing } from './measurement.js';
+
+const APP_VERSION = '1.3.0';
+const BUILD_LABEL = 'Launch Hardening';
+const DEPENDENCY_VERSIONS = Object.freeze({ cornerstone:'5.8.2', vtk:'36.4.1' });
+const IS_DEV = Boolean(import.meta?.env?.DEV);
+function safeErrorText(err){
+  const raw=String(err?.message || err || 'Unknown error');
+  return raw
+    .replace(/(?:file:\/\/)?\/?Users\/[^^\s'"]+/gi,'[local-path]')
+    .replace(/dicomfile:\d+(?:\?[^\s'"]*)?/gi,'dicomfile:[local]')
+    .replace(/[A-Za-z0-9._-]+\.(?:dcm|dicom|zip|png|jpe?g)/gi,'[local-file]')
+    .slice(0,240);
+}
+function diagnostic(code, err, level='warn'){
+  if(!IS_DEV) return;
+  const fn=console[level] || console.warn;
+  fn(`[SCAN//SPACE ${code}] ${safeErrorText(err)}`);
+}
+function proximityLabel(score){
+  if(score >= 78) return 'NEAR';
+  if(score >= 58) return 'MODERATE';
+  return 'DISTANT';
+}
 
 let coreInit, RenderingEngine, Enums, volumeLoader, imageLoader, metaData, addVolumesToViewports, setVolumesForViewports, utilities, cache, eventTarget;
 let dicomLoaderInit, wadouri;
@@ -153,6 +177,7 @@ const els = {
   bookmarkList: $('#bookmarkList'), bookmarkCount: $('#bookmarkCount'), undoTool: $('#undoTool'), redoTool: $('#redoTool'),
   exportPng: $('#exportPng'), exportJson: $('#exportJson'), seriesChooser: $('#seriesChooser'), seriesList: $('#seriesList'), windowPresets: $('#windowPresets'),
   roiContext: $('#roiContext'), roiContextOut: $('#roiContextOut'), shadingToggle: $('#shadingToggle'),
+  newStudy: $('#newStudy'), aboutButton: $('#aboutButton'), aboutModal: $('#aboutModal'), closeAbout: $('#closeAbout'), referenceBanner: $('#referenceBanner'), runtimeDiagnostics: $('#runtimeDiagnostics'), copyDiagnostics: $('#copyDiagnostics'),
 };
 
 const VIEWPORT_MAIN = 'SCANSPACE_MAIN';
@@ -227,6 +252,7 @@ const state = {
   shading:false,
   identifyMatches: [],
   identifyCenterWorld: null,
+  geometryWarnings: [],
 };
 
 const anatomyByName = new Map();
@@ -331,13 +357,22 @@ function resetRuntime(){
   els.anatomyResults.classList.add('hidden');
   els.identifyResult?.classList.add('hidden');
   if(els.identifyCandidates) els.identifyCandidates.innerHTML = '';
-  state.identifyMatches = []; state.identifyCenterWorld = null;
+  state.identifyMatches = []; state.identifyCenterWorld = null; state.geometryWarnings = [];
+  els.referenceBanner?.classList.add('hidden');
   els.anatomySearch.value = '';
   annotation.state.removeAllAnnotations();
 }
 
 async function handleFiles(files){
   if(!files?.length) return;
+  const totalBytes = files.reduce((sum,f)=>sum+(Number(f?.size)||0),0);
+  const deviceGB = Number(navigator.deviceMemory || 8);
+  const warningBytes = (deviceGB <= 4 ? 550 : deviceGB <= 8 ? 1000 : 1600) * 1024 * 1024;
+  if(totalBytes > warningBytes){
+    const gb=(totalBytes/1024/1024/1024).toFixed(2);
+    const ok=window.confirm(`This study is ${gb} GB before decompression and may exceed this browser's available memory. Continue loading locally?`);
+    if(!ok){ setNotice('Study loading cancelled. No image data was retained.'); return; }
+  }
   showLoading(`SELECTED ${files.length} FILE${files.length === 1 ? '' : 'S'} · INITIALIZING ENGINE`);
   try {
     await initialize();
@@ -362,10 +397,10 @@ async function handleFiles(files){
       throw new Error('No readable DICOM, ZIP-contained DICOM, PNG, or JPEG images were found.');
     }
   } catch (err) {
-    console.error(err);
+    diagnostic('LOAD-001', err, 'error');
     hideLoading();
-    setNotice('The selected study could not be opened. Nothing was uploaded to a server.');
-    showToast(err?.message || 'Unable to open study', 7000);
+    setNotice('STUDY ERROR [LOAD-001] · The selected study could not be opened. No image data was uploaded.');
+    showToast(`Unable to open study [LOAD-001] · ${IS_DEV ? safeErrorText(err) : 'See diagnostics for supported formats.'}`, 7000);
     returnToEmpty();
   }
 }
@@ -430,6 +465,7 @@ function parseDicomMeta(file, bytes){
     spacingBetween: Number(str('x00180088')) || 0,
     studyDate: str('x00080020'), acquisitionDate: str('x00080022'), seriesNumber: str('x00200011'), patientPosition: str('x00185100'),
     manufacturer: str('x00080070'), model: str('x00081090'), contrastAgent: str('x00180010'), kVp: str('x00180060'), magneticFieldStrength: str('x00180087'),
+    burnedInAnnotation: str('x00280301'), lossyCompression: str('x00282110'), transferSyntax: str('x00020010'),
     rows, cols, numberOfFrames,
   };
 }
@@ -456,7 +492,7 @@ async function loadDicomStudy(files){
       const bytes = new Uint8Array(await files[i].arrayBuffer());
       parsed.push(parseDicomMeta(files[i], bytes));
     } catch (e) {
-      console.warn('Skipped non-DICOM/unreadable file', files[i].name, e);
+      diagnostic('DICOM-SKIP-001', e);
     }
   }
   if(!parsed.length) throw new Error('No valid DICOM instances were found.');
@@ -473,6 +509,7 @@ async function loadDicomStudy(files){
   state.selectedSeriesUID = series[0]?.seriesUID || null;
 
   orderSeries(series);
+  const geometryWarning=validateSeriesGeometry(series); if(geometryWarning) state.geometryWarnings.push(geometryWarning);
   const imageIds = [];
   const metadataByImageId = new Map();
   for(const item of series){
@@ -495,6 +532,7 @@ async function loadDicomStudy(files){
   const firstImage = sampleImages.find(Boolean) || await imageLoader.loadAndCacheImage(imageIds[0]);
   const firstMeta = series[0];
   state.seriesMeta = firstMeta;
+  if(String(firstMeta.burnedInAnnotation||'').toUpperCase()==='YES') state.geometryWarnings.push('DICOM Burned In Annotation is YES. Pixel data may contain identifying text; verify before sharing any screenshot.');
   state.modality = firstMeta.modality;
   const reg = inferRegion(firstMeta);
   state.region = reg.region;
@@ -518,6 +556,18 @@ function orderSeries(series){
   series.sort((a,b) => a._order - b._order);
 }
 
+function validateSeriesGeometry(series){
+  if(!Array.isArray(series) || series.length < 3) return null;
+  const orders=series.map(s=>Number(s._order)).filter(Number.isFinite);
+  if(orders.length < Math.max(3,series.length*.8)) return 'Slice positions are incomplete; geometry relies partly on instance ordering.';
+  const diffs=[]; for(let i=1;i<orders.length;i++){const d=Math.abs(orders[i]-orders[i-1]); if(d>1e-6)diffs.push(d);}
+  if(diffs.length<2) return null;
+  const sorted=[...diffs].sort((a,b)=>a-b); const mid=Math.floor(sorted.length/2); const median=sorted.length%2?sorted[mid]:(sorted[mid-1]+sorted[mid])/2;
+  const maxDev=Math.max(...diffs.map(d=>Math.abs(d-median)));
+  if(median>0 && (maxDev/median>0.12 && maxDev>0.35)) return `Irregular slice spacing detected (median ${median.toFixed(2)} mm, maximum deviation ${maxDev.toFixed(2)} mm). Verify geometry against the source viewer before relying on reformats or measurements.`;
+  return null;
+}
+
 async function preloadImages(imageIds){
   const results = new Array(imageIds.length);
   let cursor = 0;
@@ -527,7 +577,7 @@ async function preloadImages(imageIds){
       const i = cursor++;
       if(i >= imageIds.length) return;
       try { results[i] = await imageLoader.loadAndCacheImage(imageIds[i]); }
-      catch (e) { console.warn('Frame decode failed', imageIds[i], e); }
+      catch (e) { diagnostic('DICOM-FRAME-001', e); }
       if(i % 10 === 0) setLoading(`DECODING FRAMES · ${Math.min(i+1,imageIds.length)} / ${imageIds.length}`);
     }
   }
@@ -609,7 +659,7 @@ async function configureVolume(imageIds, firstImage, meta){
   // make those ranges very different (especially CT).
   const actorRange = getActorScalarRange(actor);
   if(actorRange){
-    console.info('SCAN//SPACE 3D actor scalar range', actorRange, 'volumeId', state.volumeId);
+    diagnostic('VOLUME-RANGE', `scalar range ${actorRange?.join?.('..') || 'unknown'}`, 'info');
     state.scalarRange = actorRange;
     // If the DICOM-provided VOI falls completely outside the assembled scalar
     // range, use the true volume range as a safe visible default.
@@ -632,7 +682,7 @@ async function configureVolume(imageIds, firstImage, meta){
   state.engine.render();
 
   state.imageGeometry = getVolumeGeometry(state.volume, meta);
-  state.measurementCalibrated = !!(state.imageGeometry?.spacing?.length === 3 && state.imageGeometry.spacing.every(v => Number.isFinite(v) && v > 0));
+  state.measurementCalibrated = hasCalibratedSpacing(state.imageGeometry?.spacing);
   finishStudyUI({
     modality: meta.modality,
     series: meta.seriesDesc || 'DICOM SERIES',
@@ -643,7 +693,7 @@ async function configureVolume(imageIds, firstImage, meta){
   els.orientationCube?.classList.remove('hidden');
   snapshotAnnotations('initial');
   startOverlayLoop();
-  setNotice(`Volumetric ${meta.modality || 'DICOM'} study reconstructed from ${imageIds.length} spatial frames. The 3D object and Splicer are derived from the scan data; anatomy labels remain references, not detections.`);
+  setNotice(`Volumetric ${meta.modality || 'DICOM'} study reconstructed from ${imageIds.length} spatial frames. The 3D object and Splicer are derived from the scan data; anatomy labels remain references, not detections.${state.geometryWarnings.length ? ' GEOMETRY WARNING: '+state.geometryWarnings.join(' ') : ''}`);
   hideLoading();
   showToast(`Loaded ${imageIds.length} DICOM frames locally`, 3200);
 }
@@ -714,7 +764,7 @@ function setAnnotationTool(which){
   const group=getAnnotationToolGroup(); if(!group) return;
   allInteractiveAnnotationTools().forEach(t=>{try{group.setToolPassive(t.toolName);}catch(_){}});
   if(state.activeTool===which){ state.activeTool=null; }
-  else { state.activeTool=which; const ToolClass=which==='measure'?LengthTool:ArrowAnnotateTool; try{group.setToolActive(ToolClass.toolName,{bindings:[{mouseButton:csToolsEnums.MouseBindings.Primary}]});}catch(e){console.warn(e);} }
+  else { state.activeTool=which; const ToolClass=which==='measure'?LengthTool:ArrowAnnotateTool; try{group.setToolActive(ToolClass.toolName,{bindings:[{mouseButton:csToolsEnums.MouseBindings.Primary}]});}catch(e){diagnostic('RUNTIME-WARN',e);} }
   clearAnnotationButtonStates();
   els.measureTool.classList.toggle('active',state.activeTool==='measure'); els.markerTool.classList.toggle('active',state.activeTool==='marker');
   els.measureReadout.textContent=state.activeTool==='measure'?`MEASURE ACTIVE · WORLD-SPACE LENGTH · ${state.measurementCalibrated?'DICOM CALIBRATED':'UNCALIBRATED'}`:state.activeTool==='marker'?'MARKER ACTIVE · PLACE AN ARROW AND ENTER A LABEL':'SPATIAL IMAGE TOOLS · NO DIAGNOSTIC INTERPRETATION';
@@ -730,7 +780,7 @@ function setAdvancedTool(which, ToolClass, label){
   state.activeTool = state.activeTool===which ? null : which;
   clearAnnotationButtonStates();
   if(state.activeTool){
-    try{ group.setToolActive(ToolClass.toolName,{bindings:[{mouseButton:csToolsEnums.MouseBindings.Primary}]}); }catch(e){ console.warn(e); showToast(`${label} could not be activated`,3200); return; }
+    try{ group.setToolActive(ToolClass.toolName,{bindings:[{mouseButton:csToolsEnums.MouseBindings.Primary}]}); }catch(e){ diagnostic('RUNTIME-WARN',e); showToast(`${label} could not be activated`,3200); return; }
     const el=els[`${which}Tool`]; el?.classList.add('active');
     els.measureReadout.textContent=`${label.toUpperCase()} ACTIVE · PHYSICAL DICOM SPACE`;
   } else {
@@ -742,12 +792,12 @@ function activateCrosshairs(){
   if(!CrosshairsTool || state.mode!=='volume') return;
   const group=getAnnotationToolGroup(); if(!group) return;
   allInteractiveAnnotationTools().forEach(t=>{try{group.setToolPassive(t.toolName);}catch(_){}});
-  try{group.setToolActive(CrosshairsTool.toolName,{bindings:[{mouseButton:csToolsEnums.MouseBindings.Primary}]}); state.activeTool='crosshairs'; els.measureReadout.textContent='MPR CROSSHAIRS · CLICK/DRAG TO SYNCHRONIZE PLANES';}catch(e){console.warn('Crosshairs unavailable',e);}
+  try{group.setToolActive(CrosshairsTool.toolName,{bindings:[{mouseButton:csToolsEnums.MouseBindings.Primary}]}); state.activeTool='crosshairs'; els.measureReadout.textContent='MPR CROSSHAIRS · CLICK/DRAG TO SYNCHRONIZE PLANES';}catch(e){diagnostic('MPR-CROSSHAIR-001',e);}
 }
 function cloneState(v){ try{return structuredClone(v);}catch(_){try{return JSON.parse(JSON.stringify(v));}catch(__){return null;}} }
 function snapshotAnnotations(reason='change'){
   if(state.annotationSnapshotLock || !annotation?.state?.getAnnotationManager) return;
-  try{ const mgr=annotation.state.getAnnotationManager(); const snap=cloneState(mgr.saveAnnotations?.()); if(!snap) return; state.annotationHistory.push({reason,state:snap}); if(state.annotationHistory.length>60) state.annotationHistory.shift(); state.annotationRedo=[]; }catch(e){console.warn('Annotation history snapshot failed',e);}
+  try{ const mgr=annotation.state.getAnnotationManager(); const snap=cloneState(mgr.saveAnnotations?.()); if(!snap) return; state.annotationHistory.push({reason,state:snap}); if(state.annotationHistory.length>60) state.annotationHistory.shift(); state.annotationRedo=[]; }catch(e){diagnostic('ANNOTATION-HISTORY-001',e);}
 }
 function restoreAnnotationSnapshot(snap){
   if(!snap || !annotation?.state?.getAnnotationManager) return;
@@ -781,7 +831,7 @@ function installAnnotationLifecycle(){
   if(state.annotationListenerInstalled || !eventTarget || !csToolsEnums?.Events?.ANNOTATION_COMPLETED) return;
   eventTarget.addEventListener(csToolsEnums.Events.ANNOTATION_COMPLETED, (evt) => {
     const ann = evt?.detail?.annotation; if(!ann) return; const toolName=ann.metadata?.toolName;
-    if(toolName === LengthTool?.toolName){ const pts=ann.data?.handles?.points||[]; if(pts.length>=2){const a=pts[0],b=pts[1],mm=Math.hypot(b[0]-a[0],b[1]-a[1],b[2]-a[2]);els.measureReadout.textContent=`MEASURE SAVED · ${mm.toFixed(1)} mm · ${state.measurementCalibrated?'DICOM WORLD-SPACE':'UNCALIBRATED'}`;} }
+    if(toolName === LengthTool?.toolName){ const pts=ann.data?.handles?.points||[]; if(pts.length>=2){const a=pts[0],b=pts[1],mm=distanceMm(a,b);els.measureReadout.textContent=`MEASURE SAVED · ${mm.toFixed(1)} mm · ${state.measurementCalibrated?'DICOM WORLD-SPACE':'UNCALIBRATED'}`;} }
     else if(toolName === ArrowAnnotateTool?.toolName){ const p=ann.data?.handles?.points?.[0]; if(p){state.bookmarks.push({uid:ann.annotationUID,world:[...p],label:ann.data?.text||ann.data?.label||`Marker ${state.bookmarks.length+1}`});renderBookmarks();} els.measureReadout.textContent='MARKER SAVED · BOOKMARKED FOR THIS STUDY SESSION'; }
     else if(toolName === CircleROITool?.toolName && state.activeTool === 'identify'){ handleCircleIdentify(ann); }
     else { const summary=statsSummary(ann); els.measureReadout.textContent=summary ? `${toolName} · ${summary}` : `${toolName || 'ANNOTATION'} SAVED · DICOM WORLD SPACE`; }
@@ -805,7 +855,7 @@ function setZoomForViewport(viewport, factor){
     const next = clamp(current * factor, .15, 12);
     viewport.setZoom(next);
     viewport.render?.();
-  } catch (e) { console.warn('Zoom adjustment failed', e); }
+  } catch (e) { diagnostic('ZOOM-001',e); }
 }
 
 function skeletalThresholdFraction(){
@@ -868,7 +918,7 @@ function getActorScalarRange(actor){
       return [range[0], range[1]];
     }
   } catch (e) {
-    console.warn('Could not read 3D actor scalar range', e);
+    diagnostic('VOLUME-RANGE-001',e);
   }
   try {
     const range = state.volume?.getScalarData?.()?.reduce ? null : null;
@@ -1063,7 +1113,7 @@ async function jumpToSlider(){
   const vp = state.engine.getViewport(VIEWPORT_SLICE);
   const n = Math.max(1, vp.getNumberOfSlices?.() || 1);
   const idx = Math.round((+els.slicePosition.value/1000)*(n-1));
-  try { await utilities.jumpToSlice(els.sliceViewport, { imageIndex:idx }); } catch (e) { console.warn(e); }
+  try { await utilities.jumpToSlice(els.sliceViewport, { imageIndex:idx }); } catch (e) { diagnostic('RUNTIME-WARN',e); }
   updateSliceUI();
 }
 
@@ -1207,7 +1257,7 @@ function drawSliceAnatomyOverlay(){
     els.sliceAnatomyLabel.setAttribute('y', clamp(center[1]-radius*.45, 14, Math.max(14,r.height-8)));
     els.sliceAnatomyLabel.textContent = `${state.selectedAnatomy.name} · REFERENCE ROI`;
   } catch (e) {
-    console.warn('Could not draw anatomy target on slice', e);
+    diagnostic('ANATOMY-OVERLAY-001',e);
     els.sliceAnatomyOverlay?.classList.add('hidden');
   }
 }
@@ -1227,7 +1277,7 @@ function getVolumeGeometry(volume, meta){
     for(let i=0;i<3;i++) center = add(center,mul(axes[i],lengths[i]/2));
     return { dims, spacing, origin, axes, lengths, center, maxExtent:Math.max(...lengths) };
   } catch (e) {
-    console.warn('Could not derive volume geometry', e);
+    diagnostic('GEOMETRY-001',e);
     return null;
   }
 }
@@ -1263,7 +1313,7 @@ function formatDicomDate(v){ if(!v||v.length<8)return v||'—'; return `${v.slic
 function updateMetadata(info){
   const m=state.seriesMeta||{};
   const rows=[['Modality',info.modality],['Series',info.series],['Series #',m.seriesNumber||'—'],['Dimensions',info.dimensions],['Voxel',info.voxel],['Frames',state.mode==='volume'?(state.volume?.dimensions?.[2]||state.stackImageIds.length||'—'):'1'],['Slice thickness',m.sliceThickness?`${m.sliceThickness} mm`:'—'],['Study date',formatDicomDate(m.studyDate||m.acquisitionDate)],['Patient position',m.patientPosition||'—'],['Manufacturer',m.manufacturer||'—'],['Scanner',m.model||'—']];
-  if(m.contrastAgent)rows.push(['Contrast',m.contrastAgent]); if(m.kVp)rows.push(['kVp',m.kVp]); if(m.magneticFieldStrength)rows.push(['Field strength',`${m.magneticFieldStrength} T`]);
+  if(m.contrastAgent)rows.push(['Contrast',m.contrastAgent]); if(m.kVp)rows.push(['kVp',m.kVp]); if(m.magneticFieldStrength)rows.push(['Field strength',`${m.magneticFieldStrength} T`]); if(m.transferSyntax)rows.push(['Transfer syntax',m.transferSyntax]); if(m.lossyCompression)rows.push(['Lossy compression',m.lossyCompression]); if(m.burnedInAnnotation)rows.push(['Burned-in annotation',m.burnedInAnnotation]);
   els.metadataList.innerHTML=rows.map(([k,v])=>`<div><dt>${escapeHtml(k)}</dt><dd title="${escapeHtml(v)}">${escapeHtml(v)}</dd></div>`).join('');
 }
 
@@ -1409,9 +1459,9 @@ function renderIdentifyMatches(matches, centerWorld){
     return;
   }
   const best = matches[0];
-  const strength = best.score >= 78 ? 'STRONG' : best.score >= 58 ? 'MODERATE' : 'WEAK';
-  els.identifySummary.innerHTML = `Closest reference: <b>${escapeHtml(best.item.name)}</b>. Spatial match ${strength.toLowerCase()} (${Math.round(best.score)}/100). This compares location with the anatomy atlas; it does not detect tissue or diagnose the circled object.`;
-  els.identifyCandidates.innerHTML = matches.slice(0,3).map((m,i)=>`<button class="identify-candidate" data-identify-index="${i}"><span><b>${escapeHtml(m.item.name)}</b><small>${escapeHtml(m.item.group)} · ${escapeHtml(m.item.regions.join(' / '))}</small></span><em>${Math.round(m.score)}/100</em></button>`).join('') + '<div class="identify-note">Click a candidate to select/focus that anatomical reference. Exact structure naming requires a registered atlas or segmentation; this tool is deterministic and non-AI.</div>';
+  const proximity = proximityLabel(best.score);
+  els.identifySummary.innerHTML = `Closest anatomical reference: <b>${escapeHtml(best.item.name)}</b>. Spatial proximity: ${proximity.toLowerCase()}. This compares location with the reference atlas; it does not detect, segment, or diagnose the circled object.`;
+  els.identifyCandidates.innerHTML = matches.slice(0,3).map((m,i)=>`<button class="identify-candidate" data-identify-index="${i}"><span><b>${escapeHtml(m.item.name)}</b><small>${escapeHtml(m.item.group)} · ${escapeHtml(m.item.regions.join(' / '))}</small></span><em>${proximityLabel(m.score)}</em></button>`).join('') + '<div class="identify-note">Click a candidate to select/focus that anatomical reference. Results are spatial references only; exact structure naming requires a registered atlas or patient-specific segmentation.</div>';
   els.identifyCandidates.querySelectorAll('[data-identify-index]').forEach(btn=>btn.addEventListener('click',()=>{
     const match=state.identifyMatches[+btn.dataset.identifyIndex];
     if(!match) return;
@@ -1445,8 +1495,8 @@ function handleCircleIdentify(ann){
   renderIdentifyMatches(matches, geometry.center);
   if(Number.isFinite(roiMean) && els.identifySummary) els.identifySummary.innerHTML += ` <span class="identify-hu">ROI mean ${roiMean.toFixed(1)}${String(state.modality||'').toUpperCase()==='CT' ? ' HU' : ''}.</span>`;
   if(matches[0]){
-    els.measureReadout.textContent=`IDENTIFY · CLOSEST REFERENCE ${matches[0].item.name.toUpperCase()} · ${Math.round(matches[0].score)}/100 · NOT A DETECTION`;
-    showToast(`Reference match: ${matches[0].item.name} · ${Math.round(matches[0].score)}/100`,3200);
+    els.measureReadout.textContent=`IDENTIFY · CLOSEST REFERENCE ${matches[0].item.name.toUpperCase()} · ${proximityLabel(matches[0].score)} · NOT A DETECTION`;
+    showToast(`Closest reference: ${matches[0].item.name} · ${proximityLabel(matches[0].score)}`,3200);
   }
 }
 
@@ -1576,7 +1626,7 @@ function applyFixedROIPlanes({render=true}={}){
     if(render) main.render?.();
     return true;
   } catch (e) {
-    console.warn('Could not reapply fixed anatomy ROI planes', e);
+    diagnostic('ROI-REAPPLY-001',e);
     return false;
   }
 }
@@ -1677,7 +1727,7 @@ function isolateSelectedAnatomy(){
     setNotice(`${item.name}: the 3D patient volume is isolated to a fixed anatomical reference ROI. Orbit, pan, and zoom now move the camera around the intact isolated volume; the ROI does not rotate into slice planes. This is spatial isolation, not patient-specific organ segmentation or diagnosis.`);
     showToast(`${item.name} · reference ROI isolated`, 3000);
   } catch (e) {
-    console.warn('SCAN//SPACE ROI clipping unavailable', e);
+    diagnostic('ROI-CLIP-001',e);
     setNotice(`Could not isolate ${item.name}: ${e?.message || e}. Reference focus is still active.`);
     showToast(`ROI isolation failed: ${e?.message || 'renderer clipping unavailable'}`, 5200);
   }
@@ -1696,7 +1746,7 @@ function resetAnatomyIsolation({clearSelection=false}={}){
       actor?.modified?.();
       main?.resetCamera?.();
       main?.render?.();
-    } catch (e) { console.warn('Could not reset ROI clipping', e); }
+    } catch (e) { diagnostic('ROI-RESET-001',e); }
   }
   state.roiClipPlanes = [];
   state.isolationActive = false;
@@ -1972,18 +2022,68 @@ function stopCine(){state.cinePlaying=false;if(state.cineTimer)clearInterval(sta
 function snap3DOrientation(view){
   if(state.mode!=='volume'||!state.imageGeometry) return; const vp=state.engine.getViewport(VIEWPORT_MAIN), c=state.imageGeometry.center,d=Math.max(100,state.imageGeometry.maxExtent*1.6);
   const map={anterior:{v:[0,-1,0],up:[0,0,1]},posterior:{v:[0,1,0],up:[0,0,1]},left:{v:[1,0,0],up:[0,0,1]},right:{v:[-1,0,0],up:[0,0,1]},superior:{v:[0,0,1],up:[0,-1,0]},inferior:{v:[0,0,-1],up:[0,1,0]}};
-  const o=map[view]; if(!o)return; const pos=[c[0]+o.v[0]*d,c[1]+o.v[1]*d,c[2]+o.v[2]*d]; try{vp.setCamera({focalPoint:c,position:pos,viewUp:o.up});vp.render();}catch(e){console.warn(e);}
+  const o=map[view]; if(!o)return; const pos=[c[0]+o.v[0]*d,c[1]+o.v[1]*d,c[2]+o.v[2]*d]; try{vp.setCamera({focalPoint:c,position:pos,viewUp:o.up});vp.render();}catch(e){diagnostic('RUNTIME-WARN',e);}
 }
 
+function safeAnnotationExport(){
+  const anns=annotation?.state?.getAllAnnotations?.()||[];
+  return anns.map((ann)=>{
+    const points=(ann?.data?.handles?.points||[]).filter(p=>Array.isArray(p)&&p.length>=3).map(p=>p.slice(0,3).map(v=>Number(Number(v).toFixed(3))));
+    const text=String(ann?.data?.text||ann?.data?.label||'').slice(0,120);
+    const out={tool:String(ann?.metadata?.toolName||'annotation'),points};
+    if(text) out.label=text;
+    const summary=statsSummary(ann); if(summary) out.statistics=summary;
+    return out;
+  });
+}
 function exportCurrentPng(){
-  const element=state.slicePrimary?els.sliceViewport:els.volumeViewport; const canvas=element?.querySelector('canvas'); if(!canvas){showToast('No rendered canvas available',2200);return;}
-  try{canvas.toBlob(blob=>{if(!blob)return;downloadBlob(blob,`scanspace-${state.modality||'study'}-${Date.now()}.png`);},'image/png');}catch(e){showToast('PNG export failed',2400);}
+  if(!window.confirm('Exported pixels may contain burned-in identifiers from the source image. Verify the image before sharing. Continue?')) return;
+  const viewportCanvas=els.volumeViewport?.querySelector('canvas') || els.sliceViewport?.querySelector('canvas');
+  if(!viewportCanvas){showToast('Nothing to export',1800);return;}
+  try{
+    const footer=30;
+    const out=document.createElement('canvas'); out.width=viewportCanvas.width; out.height=viewportCanvas.height+footer;
+    const c=out.getContext('2d'); c.drawImage(viewportCanvas,0,0);
+    c.fillStyle='#050709'; c.fillRect(0,viewportCanvas.height,out.width,footer);
+    c.fillStyle='#b6c0c7'; c.font=`${Math.max(12,Math.round(out.width/90))}px system-ui,sans-serif`;
+    c.fillText(`SCAN//SPACE ${APP_VERSION} · VISUALIZATION ONLY · NO PATIENT IDENTIFIERS INCLUDED`,12,viewportCanvas.height+20);
+    out.toBlob(blob=>{if(!blob)return;downloadBlob(blob,`scanspace-${String(state.modality||'study').toLowerCase()}-${Date.now()}.png`);},'image/png');
+  }catch(e){diagnostic('EXPORT-PNG-001',e);showToast('PNG export failed [EXPORT-PNG-001]',2400);}
 }
 function exportStudyData(){
-  const data={version:'1.2.0',modality:state.modality,region:state.region,series:state.seriesMeta?{seriesUID:state.seriesMeta.seriesUID,seriesDescription:state.seriesMeta.seriesDesc,studyDescription:state.seriesMeta.studyDesc}:null,geometry:state.imageGeometry?{dimensions:state.imageGeometry.dims,spacing:state.imageGeometry.spacing,origin:state.imageGeometry.origin}:null,bookmarks:state.bookmarks,annotations:annotation?.state?.getAnnotationManager?.()?.saveAnnotations?.()||null,exportedAt:new Date().toISOString()};
-  downloadBlob(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}),`scanspace-data-${Date.now()}.json`);
+  if(!window.confirm('The safe data export excludes DICOM identifiers, but marker labels are user-entered and may contain identifying text. Continue?')) return;
+  const data={
+    schema:'scanspace-safe-export-v1',version:APP_VERSION,
+    intendedUse:'visualization-and-education-only',
+    study:{modality:state.modality,region:state.region},
+    geometry:state.imageGeometry?{dimensions:state.imageGeometry.dims,spacing:state.imageGeometry.spacing}:null,
+    bookmarks:(state.bookmarks||[]).map((b,i)=>({label:String(b.label||`Marker ${i+1}`).slice(0,120),world:(b.world||[]).slice(0,3).map(v=>Number(Number(v).toFixed(3)))})),
+    annotations:safeAnnotationExport(),exportedAt:new Date().toISOString(),
+    privacy:'Patient names, dates of birth, accession numbers, filenames, DICOM UIDs and raw DICOM metadata are intentionally excluded.'
+  };
+  downloadBlob(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}),`scanspace-safe-data-${Date.now()}.json`);
 }
 function downloadBlob(blob,name){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},500);}
+
+function buildSafeDiagnostics(){
+  const canvas=document.createElement('canvas');
+  const webgl2=!!canvas.getContext('webgl2');
+  return [
+    `SCAN//SPACE ${APP_VERSION} · ${BUILD_LABEL}`,
+    `Cornerstone ${DEPENDENCY_VERSIONS.cornerstone} · VTK ${DEPENDENCY_VERSIONS.vtk}`,
+    `Browser: ${navigator.userAgent}`,
+    `WebGL2: ${webgl2?'yes':'no'} · crossOriginIsolated: ${self.crossOriginIsolated?'yes':'no'}`,
+    `CPU threads: ${navigator.hardwareConcurrency || 'unknown'} · device memory: ${navigator.deviceMemory ? navigator.deviceMemory+' GB' : 'unknown'}`,
+    `Study mode: ${state.mode || 'none'} · modality: ${state.modality || 'none'} · region class: ${state.region || 'none'}`,
+    `Geometry warnings: ${state.geometryWarnings.length ? state.geometryWarnings.join(' | ') : 'none'}`,
+    'No patient name, filename, DICOM UID, accession number, or raw metadata included.'
+  ].join('\n');
+}
+function refreshDiagnostics(){ if(els.runtimeDiagnostics) els.runtimeDiagnostics.textContent=buildSafeDiagnostics(); }
+function copySafeDiagnostics(){
+  const text=buildSafeDiagnostics();
+  navigator.clipboard?.writeText?.(text).then(()=>showToast('PHI-safe diagnostics copied',1800)).catch(()=>showToast('Could not copy diagnostics',1800));
+}
 
 function installWorkstationShortcuts(){
   window.addEventListener('keydown',(e)=>{
@@ -2106,6 +2206,15 @@ els.orientationCube?.querySelectorAll('button').forEach(btn=>btn.addEventListene
 els.roiContext?.addEventListener('input',()=>updateIsolationContext(+els.roiContext.value));
 els.shadingToggle?.addEventListener('click',()=>{state.shading=!state.shading;els.shadingToggle.classList.toggle('active',state.shading);applyVisualization();});
 
+els.newStudy?.addEventListener('click',()=>{
+  const ok=window.confirm('Clear this in-memory study, markers, measurements and viewer state?');
+  if(ok) window.location.reload();
+});
+els.aboutButton?.addEventListener('click',()=>{refreshDiagnostics();els.aboutModal?.classList.remove('hidden');});
+els.closeAbout?.addEventListener('click',()=>els.aboutModal?.classList.add('hidden'));
+els.copyDiagnostics?.addEventListener('click',copySafeDiagnostics);
+els.aboutModal?.addEventListener('click',(e)=>{if(e.target===els.aboutModal)els.aboutModal.classList.add('hidden');});
+
 installSliceDockDrag();
 installWorkstationShortcuts();
 
@@ -2114,12 +2223,14 @@ installWorkstationShortcuts();
 hideLoading();
 startDust();
 
+window.addEventListener('pagehide',()=>{ try{cache?.purgeCache?.();}catch(_){} try{wadouri?.fileManager?.purge?.();}catch(_){} });
+
 window.addEventListener('unhandledrejection', (event) => {
-  console.error('Unhandled SCAN//SPACE promise rejection:', event.reason);
+  diagnostic('ENGINE-ASYNC-001', event.reason, 'error');
   hideLoading();
-  setNotice(`ENGINE ERROR: ${event.reason?.message || event.reason || 'Unknown asynchronous error'}`);
+  setNotice('ENGINE ERROR [ENGINE-ASYNC-001] · The viewer encountered an asynchronous imaging error. You can choose NEW STUDY and try another series.');
 });
 
 window.addEventListener('error', (event) => {
-  console.error('SCAN//SPACE runtime error:', event.error || event.message);
+  diagnostic('ENGINE-RUNTIME-001', event.error || event.message, 'error');
 });
