@@ -205,6 +205,13 @@ async function initialize(){
   await loadImagingModules();
   await coreInit();
   await dicomLoaderInit({
+    // Local files are registered through wadouri.fileManager.add(), which
+    // produces dicomfile: imageIds. Cornerstone 5.8 defaults to the new
+    // NATURALIZED metadata path; that path expects the metadata cache to be
+    // populated with pixel data first and therefore fails for these local
+    // fileManager imageIds with "no pixel data in NATURALIZED". Bind the
+    // dicomfile scheme to the proven wadouri dataset loader instead.
+    useLegacyMetadataProvider: true,
     maxWebWorkers: Math.max(1, Math.min(8, Math.floor((navigator.hardwareConcurrency || 4) / 2))),
   });
   await toolsInit();
