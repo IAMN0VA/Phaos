@@ -1,6 +1,6 @@
 {
   "name": "scanspace",
-  "version": "1.0.2",
+  "version": "1.1.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -15,7 +15,8 @@
     "@cornerstonejs/tools": "5.8.2",
     "dicom-parser": "1.8.21",
     "fflate": "0.8.3",
-    "events": "3.3.0"
+    "events": "3.3.0",
+    "@kitware/vtk.js": "36.4.1"
   },
   "devDependencies": {
     "@originjs/vite-plugin-commonjs": "1.0.3",

@@ -12,7 +12,6 @@
     <header class="topbar">
       <div class="brand">SCAN//SPACE <span>LOCAL MEDICAL IMAGING</span></div>
       <div class="study-id"><b id="studyType">NO STUDY</b><i>/</i><span id="studyRegion">WAITING FOR INPUT</span></div>
-      <div class="privacy-badge"><span></span>LOCAL PROCESSING</div>
     </header>
 
     <aside class="left-panel panel">
@@ -21,6 +20,11 @@
         <label class="terminal-input"><b>&gt;</b><input id="anatomySearch" placeholder="Search anatomy, e.g. liver, C2, LAD…" autocomplete="off" /></label>
         <div id="anatomyResults" class="anatomy-results hidden"></div>
         <p class="microcopy">Searches the anatomical reference catalog and synonyms. Selecting a result can focus or crop the patient volume to a reference ROI; exact organ boundaries require a segmentation mask.</p>
+        <div id="identifyResult" class="identify-result hidden">
+          <div class="identify-head"><span>CIRCLE &amp; IDENTIFY</span><em>REFERENCE MATCH · NOT DETECTION</em></div>
+          <p id="identifySummary">Circle a structure on a volumetric slice to compare its physical location with the anatomy reference catalog.</p>
+          <div id="identifyCandidates" class="identify-candidates"></div>
+        </div>
         <div id="anatomySelection" class="anatomy-selection hidden">
           <div class="selection-head"><span id="selectedAnatomy">—</span><em id="selectionMode">REFERENCE ROI</em></div>
           <p id="selectionDetail">Reference location only — not detected in this scan.</p>
@@ -29,11 +33,16 @@
             <button id="isolateAnatomy" class="primary">ISOLATE ROI</button>
             <button id="resetIsolation">RESET</button>
           </div>
+          <label class="control context-control"><span>ROI CONTEXT <output id="roiContextOut">0%</output></span><input id="roiContext" type="range" min="0" max="100" value="0" /></label>
         </div>
       </section>
       <section class="anatomy-section">
         <div class="section-title row"><span>ANATOMICAL EXPLORER</span><em id="regionConfidence">NO STUDY</em></div>
         <div id="anatomyTree" class="anatomy-tree empty">Upload a study to organize relevant anatomy.</div>
+      </section>
+      <section class="bookmark-section">
+        <div class="section-title row"><span>MARKERS / BOOKMARKS</span><em id="bookmarkCount">0</em></div>
+        <div id="bookmarkList" class="bookmark-list empty">No saved markers yet.</div>
       </section>
       <section>
         <div class="section-title">STUDY METADATA</div>
@@ -44,6 +53,9 @@
     <main id="workspace" class="workspace">
       <canvas id="dustCanvas" class="dust-canvas"></canvas>
       <div id="volumeViewport" class="cornerstone-viewport volume-viewport"></div>
+      <section id="mprSagittalDock" class="mpr-dock mpr-sag"><header><span>SAGITTAL</span><span class="orientation-note">L/R · S/I</span></header><div id="mprSagittal" class="cornerstone-viewport mpr-viewport"></div><div class="orientation-label top">S</div><div class="orientation-label bottom">I</div><div class="orientation-label left">P</div><div class="orientation-label right">A</div></section>
+      <section id="mprCoronalDock" class="mpr-dock mpr-cor"><header><span>CORONAL</span><span class="orientation-note">L/R · S/I</span></header><div id="mprCoronal" class="cornerstone-viewport mpr-viewport"></div><div class="orientation-label top">S</div><div class="orientation-label bottom">I</div><div class="orientation-label left">R</div><div class="orientation-label right">L</div></section>
+      <div id="orientationCube" class="orientation-cube hidden" title="Snap 3D orientation"><button data-view="anterior">A</button><button data-view="posterior">P</button><button data-view="left">L</button><button data-view="right">R</button><button data-view="superior">S</button><button data-view="inferior">I</button></div>
       <svg id="worldOverlay" class="world-overlay" aria-hidden="true">
         <polygon id="splicePlane" class="splice-plane" points="" />
         <g id="axisGroup">
@@ -93,24 +105,45 @@
           </div>
         </header>
         <div id="sliceViewport" class="cornerstone-viewport slice-viewport"></div>
-        <footer id="toolStatus">SPATIAL SLICE · NO DIAGNOSTIC INTERPRETATION</footer>
+        <div class="orientation-label top">A</div><div class="orientation-label bottom">P</div><div class="orientation-label left">R</div><div class="orientation-label right">L</div>
+        <svg id="sliceAnatomyOverlay" class="slice-anatomy-overlay hidden" aria-hidden="true">
+          <circle id="sliceAnatomyRing" cx="0" cy="0" r="28" />
+          <line id="sliceAnatomyH" x1="-12" y1="0" x2="12" y2="0" />
+          <line id="sliceAnatomyV" x1="0" y1="-12" x2="0" y2="12" />
+          <text id="sliceAnatomyLabel" x="0" y="0">ANATOMY ROI</text>
+        </svg>
+        <footer id="toolStatus">SPATIAL SLICE · PHYSICAL DICOM SPACE WHEN CALIBRATED</footer>
       </section>
     </main>
 
     <aside class="right-panel panel">
+      <section class="volume-only">
+        <div class="section-title row"><span>WORKSTATION</span><em>MPR</em></div>
+        <div class="tool-grid compact-tools">
+          <button id="mprToggle" class="tool"><b>⊞</b><span>4-UP MPR</span></button>
+          <button id="cineToggle" class="tool"><b>▶</b><span>CINE</span></button>
+          <button id="undoTool" class="tool"><b>↶</b><span>UNDO</span></button>
+          <button id="redoTool" class="tool"><b>↷</b><span>REDO</span></button>
+        </div>
+        <label class="control cine-control"><span>CINE SPEED <output id="cineFpsOut">8 FPS</output></span><input id="cineFps" type="range" min="1" max="24" value="8" /></label>
+      </section>
       <section>
         <div class="section-title row"><span>VISUALIZATION</span><em>INSTRUMENTS</em></div>
-        <div id="colorMode" class="segmented three">
+        <div id="colorMode" class="segmented four">
           <button data-mode="gray" class="active">B&amp;W</button>
           <button data-mode="thermal">THERMAL</button>
           <button data-mode="real">REAL-LIFE</button>
+          <button data-mode="skeletal">SKELETAL</button>
         </div>
-        <p class="microcopy compact">REAL-LIFE is a skin/bone-style intensity map, not captured tissue color and not a diagnostic classification.</p>
+        <p class="microcopy compact">SKELETAL is a high-density visualization preset. On CT it targets bone-density voxels; on other modalities it is an approximate high-intensity view. REAL-LIFE is deterministic pseudo-color, not captured tissue color.</p>
+        <div class="section-title subhead">CT / INTENSITY PRESETS</div>
+        <div id="windowPresets" class="preset-grid"><button data-preset="soft">SOFT</button><button data-preset="lung">LUNG</button><button data-preset="bone">BONE</button><button data-preset="brain">BRAIN</button><button data-preset="abdomen">ABDOMEN</button><button data-preset="vessel">VESSEL</button></div>
         <label class="control"><span>CONTRAST <output id="contrastOut">100%</output></span><input id="contrast" type="range" min="40" max="220" value="100" /></label>
         <label class="control"><span>BRIGHTNESS <output id="brightnessOut">0</output></span><input id="brightness" type="range" min="-80" max="80" value="0" /></label>
         <label class="control volume-only"><span>VOLUME THRESHOLD <output id="thresholdOut">18%</output></span><input id="threshold" type="range" min="0" max="85" value="18" /></label>
         <label class="control volume-only"><span>SCAN DENSITY / QUALITY <output id="densityOut">80%</output></span><input id="density" type="range" min="20" max="100" value="80" /></label>
         <label class="control volume-only"><span>VOLUME OPACITY <output id="opacityOut">90%</output></span><input id="opacity" type="range" min="10" max="100" value="90" /></label>
+        <div class="switch-row volume-only"><span>SURFACE ENHANCE / SHADING</span><button id="shadingToggle" class="switch"><i></i></button></div>
       </section>
 
       <section class="volume-only">
@@ -127,8 +160,16 @@
           <button id="measureTool" class="tool"><b>⌁</b><span>MEASURE</span></button>
           <button id="markerTool" class="tool"><b>＋</b><span>MARKER</span></button>
           <button id="resetView" class="tool"><b>↺</b><span>RESET VIEW</span></button>
-          <button id="clearTools" class="tool"><b>×</b><span>CLEAR</span></button>
+          <button id="clearTools" class="tool" title="Clear measurements. Markers persist for this study session until reload/refresh."><b>×</b><span>CLEAR MEAS.</span></button>
+          <button id="probeTool" class="tool"><b>◎</b><span>HU / PROBE</span></button>
+          <button id="rectRoiTool" class="tool"><b>▭</b><span>RECT ROI</span></button>
+          <button id="ellipseRoiTool" class="tool"><b>◯</b><span>ELLIPSE ROI</span></button>
+          <button id="identifyTool" class="tool" title="Circle a structure and match its location to the anatomical reference catalog"><b>◉</b><span>IDENTIFY</span></button>
+          <button id="angleTool" class="tool"><b>∠</b><span>ANGLE</span></button>
+          <button id="bidirTool" class="tool"><b>↔</b><span>BIDIR</span></button>
+          <button id="cobbTool" class="tool"><b>⋀</b><span>COBB</span></button>
         </div>
+        <div class="export-row"><button id="exportPng">EXPORT PNG</button><button id="exportJson">EXPORT DATA</button></div>
       </section>
 
       <section class="safety">
@@ -138,6 +179,7 @@
       </section>
     </aside>
   </div>
+  <div id="seriesChooser" class="series-chooser hidden"><div class="series-modal"><header><b>SELECT DICOM SERIES</b><span>Choose which series to explore</span></header><div id="seriesList" class="series-list"></div></div></div>
   <script type="module" src="/src/main.js"></script>
 </body>
 </html>

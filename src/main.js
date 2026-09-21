@@ -1,17 +1,19 @@
-let coreInit, RenderingEngine, Enums, volumeLoader, imageLoader, metaData, addVolumesToViewports, setVolumesForViewports, utilities, cache;
+let coreInit, RenderingEngine, Enums, volumeLoader, imageLoader, metaData, addVolumesToViewports, setVolumesForViewports, utilities, cache, eventTarget;
 let dicomLoaderInit, wadouri;
 let toolsInit, addTool, ToolGroupManager, csToolsEnums, LengthTool, ArrowAnnotateTool, PanTool, ZoomTool, StackScrollTool, TrackballRotateTool, annotation;
-let dicomParser, unzipSync;
+let CrosshairsTool, ProbeTool, RectangleROITool, EllipticalROITool, CircleROITool, AngleTool, BidirectionalTool, CobbAngleTool;
+let dicomParser, unzipSync, vtkPlane;
 let modulesLoaded = false;
 
 async function loadImagingModules(){
   if(modulesLoaded) return;
-  const [core, dicomLoader, tools, dicomParserModule, fflate] = await Promise.all([
+  const [core, dicomLoader, tools, dicomParserModule, fflate, vtkPlaneModule] = await Promise.all([
     import('@cornerstonejs/core'),
     import('@cornerstonejs/dicom-image-loader'),
     import('@cornerstonejs/tools'),
     import('dicom-parser'),
     import('fflate'),
+    import('@kitware/vtk.js/Common/DataModel/Plane'),
   ]);
 
   ({
@@ -25,6 +27,7 @@ async function loadImagingModules(){
     setVolumesForViewports,
     utilities,
     cache,
+    eventTarget,
   } = core);
 
   ({ init: dicomLoaderInit, wadouri } = dicomLoader);
@@ -43,14 +46,24 @@ async function loadImagingModules(){
     annotation,
   } = tools);
 
+  CrosshairsTool = tools.CrosshairsTool;
+  ProbeTool = tools.ProbeTool;
+  RectangleROITool = tools.RectangleROITool;
+  EllipticalROITool = tools.EllipticalROITool;
+  CircleROITool = tools.CircleROITool;
+  AngleTool = tools.AngleTool;
+  BidirectionalTool = tools.BidirectionalTool;
+  CobbAngleTool = tools.CobbAngleTool;
+
   dicomParser = dicomParserModule.default || dicomParserModule;
   unzipSync = fflate.unzipSync;
+  vtkPlane = vtkPlaneModule.default || vtkPlaneModule;
 
   const required = {
     coreInit, RenderingEngine, Enums, volumeLoader, imageLoader, metaData,
     dicomLoaderInit, wadouri, toolsInit, addTool, ToolGroupManager,
     LengthTool, ArrowAnnotateTool, PanTool, ZoomTool, StackScrollTool,
-    TrackballRotateTool, annotation, dicomParser, unzipSync,
+    TrackballRotateTool, annotation, dicomParser, unzipSync, vtkPlane, eventTarget,
   };
   const missing = Object.entries(required).filter(([,value]) => !value).map(([name]) => name);
   if(missing.length){
@@ -84,6 +97,9 @@ const els = {
   anatomyTree: $('#anatomyTree'),
   anatomySearch: $('#anatomySearch'),
   anatomyResults: $('#anatomyResults'),
+  identifyResult: $('#identifyResult'),
+  identifySummary: $('#identifySummary'),
+  identifyCandidates: $('#identifyCandidates'),
   anatomySelection: $('#anatomySelection'),
   selectedAnatomy: $('#selectedAnatomy'),
   selectionMode: $('#selectionMode'),
@@ -126,10 +142,21 @@ const els = {
   axisX: $('#axisX'), axisY: $('#axisY'), axisZ: $('#axisZ'),
   axisXLabel: $('#axisXLabel'), axisYLabel: $('#axisYLabel'), axisZLabel: $('#axisZLabel'),
   anatomyFocusGroup: $('#anatomyFocusGroup'), anatomyFocusLabel: $('#anatomyFocusLabel'),
+  sliceAnatomyOverlay: $('#sliceAnatomyOverlay'), sliceAnatomyRing: $('#sliceAnatomyRing'),
+  sliceAnatomyH: $('#sliceAnatomyH'), sliceAnatomyV: $('#sliceAnatomyV'), sliceAnatomyLabel: $('#sliceAnatomyLabel'),
+  mprSagittalDock: $('#mprSagittalDock'), mprCoronalDock: $('#mprCoronalDock'),
+  mprSagittal: $('#mprSagittal'), mprCoronal: $('#mprCoronal'), mprToggle: $('#mprToggle'),
+  orientationCube: $('#orientationCube'), cineToggle: $('#cineToggle'), cineFps: $('#cineFps'), cineFpsOut: $('#cineFpsOut'),
+  probeTool: $('#probeTool'), rectRoiTool: $('#rectRoiTool'), ellipseRoiTool: $('#ellipseRoiTool'), identifyTool: $('#identifyTool'), angleTool: $('#angleTool'), bidirTool: $('#bidirTool'), cobbTool: $('#cobbTool'),
+  bookmarkList: $('#bookmarkList'), bookmarkCount: $('#bookmarkCount'), undoTool: $('#undoTool'), redoTool: $('#redoTool'),
+  exportPng: $('#exportPng'), exportJson: $('#exportJson'), seriesChooser: $('#seriesChooser'), seriesList: $('#seriesList'), windowPresets: $('#windowPresets'),
+  roiContext: $('#roiContext'), roiContextOut: $('#roiContextOut'), shadingToggle: $('#shadingToggle'),
 };
 
 const VIEWPORT_MAIN = 'SCANSPACE_MAIN';
 const VIEWPORT_SLICE = 'SCANSPACE_SLICE';
+const VIEWPORT_SAG = 'SCANSPACE_SAGITTAL';
+const VIEWPORT_COR = 'SCANSPACE_CORONAL';
 const TOOLGROUP_MAIN = 'SCANSPACE_MAIN_TOOLS';
 const TOOLGROUP_SLICE = 'SCANSPACE_SLICE_TOOLS';
 const TOOLGROUP_STACK = 'SCANSPACE_STACK_TOOLS';
@@ -172,8 +199,32 @@ const state = {
   selectedAnatomyWorld: null,
   isolationActive: false,
   isolationBounds: null,
+  roiClipPlanes: [],
+  roiClipUpdaterOriginal: null,
+  roiCameraGuardInstalled: false,
+  roiReapplyRAF: 0,
   slicePrimary: false,
   sliceMinimized: false,
+  sliceDockPos: null,
+  sliceDrag: null,
+  measurementCalibrated: false,
+  annotationListenerInstalled: false,
+  skeletonPreset: false,
+  mprMode: false,
+  cinePlaying: false,
+  cineTimer: 0,
+  cineFps: 8,
+  bookmarks: [],
+  annotationHistory: [],
+  annotationRedo: [],
+  annotationSnapshotLock: false,
+  presetVOI: null,
+  selectedSeriesUID: null,
+  allSeriesSummary: [],
+  isolationContext: 0,
+  shading:false,
+  identifyMatches: [],
+  identifyCenterWorld: null,
 };
 
 const ANATOMY_CATALOG = [
@@ -313,12 +364,13 @@ async function initialize(){
   });
   await toolsInit();
 
-  [LengthTool, ArrowAnnotateTool, PanTool, ZoomTool, StackScrollTool, TrackballRotateTool].forEach((tool) => {
+  [LengthTool, ArrowAnnotateTool, PanTool, ZoomTool, StackScrollTool, TrackballRotateTool, CrosshairsTool, ProbeTool, RectangleROITool, EllipticalROITool, CircleROITool, AngleTool, BidirectionalTool, CobbAngleTool].filter(Boolean).forEach((tool) => {
     try { addTool(tool); } catch (_) { /* tool may already be registered after hot reload */ }
   });
 
   registerWebImageLoader();
   state.engine = new RenderingEngine('SCANSPACE_RENDERING_ENGINE');
+  installAnnotationLifecycle();
   state.initialized = true;
   hideLoading();
   startDust();
@@ -338,6 +390,8 @@ function resetRuntime(){
   els.markerTool.classList.remove('active');
   try { state.engine.disableElement(VIEWPORT_MAIN); } catch (_) {}
   try { state.engine.disableElement(VIEWPORT_SLICE); } catch (_) {}
+  try { state.engine.disableElement(VIEWPORT_SAG); } catch (_) {}
+  try { state.engine.disableElement(VIEWPORT_COR); } catch (_) {}
   try { cache.purgeCache(); } catch (_) {}
   try { wadouri.fileManager.purge(); } catch (_) {}
   state.volumeId = null;
@@ -350,9 +404,21 @@ function resetRuntime(){
   state.isolationBounds = null;
   state.slicePrimary = false;
   state.sliceMinimized = false;
+  state.sliceDockPos = null;
+  state.measurementCalibrated = false;
+  state.skeletonPreset = false;
+  stopCine();
+  state.isolationContext=0; if(els.roiContext){els.roiContext.value='0';els.roiContextOut.textContent='0%';}
+  state.mprMode = false; state.bookmarks = []; state.annotationHistory = []; state.annotationRedo = []; state.presetVOI = null;
+  els.workspace.classList.remove('mpr-mode'); els.orientationCube?.classList.add('hidden');
+  renderBookmarks();
+  els.sliceDock.style.left = ''; els.sliceDock.style.top = ''; els.sliceDock.style.right = ''; els.sliceDock.style.bottom = '';
   els.workspace.classList.remove('slice-primary','slice-minimized');
   els.anatomySelection.classList.add('hidden');
   els.anatomyResults.classList.add('hidden');
+  els.identifyResult?.classList.add('hidden');
+  if(els.identifyCandidates) els.identifyCandidates.innerHTML = '';
+  state.identifyMatches = []; state.identifyCenterWorld = null;
   els.anatomySearch.value = '';
   annotation.state.removeAllAnnotations();
 }
@@ -449,8 +515,24 @@ function parseDicomMeta(file, bytes){
     pixelSpacing: nums('x00280030'),
     sliceThickness: Number(str('x00180050')) || 0,
     spacingBetween: Number(str('x00180088')) || 0,
+    studyDate: str('x00080020'), acquisitionDate: str('x00080022'), seriesNumber: str('x00200011'), patientPosition: str('x00185100'),
+    manufacturer: str('x00080070'), model: str('x00081090'), contrastAgent: str('x00180010'), kVp: str('x00180060'), magneticFieldStrength: str('x00180087'),
     rows, cols, numberOfFrames,
   };
+}
+
+function chooseDicomSeries(allSeries){
+  return new Promise((resolve) => {
+    els.seriesList.innerHTML = allSeries.map((series, i) => {
+      const m = series[0] || {};
+      const desc = m.seriesDesc || m.studyDesc || `Series ${i+1}`;
+      return `<button class="series-option" data-series-index="${i}"><span><b>${escapeHtml(desc)}</b><span>${escapeHtml(m.modality || 'DICOM')} · ${escapeHtml(m.body || 'body region not specified')}</span></span><em>${totalFrames(series)} FRAME${totalFrames(series)===1?'':'S'}</em></button>`;
+    }).join('');
+    els.seriesChooser.classList.remove('hidden');
+    const buttons=[...els.seriesList.querySelectorAll('.series-option')];
+    const finish=(series)=>{els.seriesChooser.classList.add('hidden');resolve(series);};
+    buttons.forEach(btn=>btn.addEventListener('click',()=>finish(allSeries[+btn.dataset.seriesIndex]),{once:true}));
+  });
 }
 
 async function loadDicomStudy(files){
@@ -472,8 +554,10 @@ async function loadDicomStudy(files){
     groups.get(p.seriesUID).push(p);
   }
   const allSeries = [...groups.values()].sort((a,b) => totalFrames(b) - totalFrames(a));
-  const series = allSeries[0];
-  if(allSeries.length > 1) showToast(`Multiple DICOM series found. Loaded the largest (${totalFrames(series)} frames).`, 5000);
+  state.allSeriesSummary = allSeries.map(s => ({ uid:s[0]?.seriesUID || '', modality:s[0]?.modality || 'DICOM', description:s[0]?.seriesDesc || s[0]?.studyDesc || 'Unnamed series', frames:totalFrames(s) }));
+  const series = allSeries.length > 1 ? await chooseDicomSeries(allSeries) : allSeries[0];
+  if(!series) throw new Error('No DICOM series selected.');
+  state.selectedSeriesUID = series[0]?.seriesUID || null;
 
   orderSeries(series);
   const imageIds = [];
@@ -492,6 +576,7 @@ async function loadDicomStudy(files){
     }
   }
 
+  state.stackImageIds = [...imageIds];
   setLoading(`DECODING ${imageIds.length} FRAME${imageIds.length === 1 ? '' : 'S'}`);
   const sampleImages = await preloadImages(imageIds);
   const firstImage = sampleImages.find(Boolean) || await imageLoader.loadAndCacheImage(imageIds[0]);
@@ -576,6 +661,8 @@ async function configureVolume(imageIds, firstImage, meta){
   state.engine.setViewports([
     { viewportId: VIEWPORT_MAIN, type: Enums.ViewportType.VOLUME_3D, element: els.volumeViewport, defaultOptions: { background:[0.018,0.024,0.03] } },
     { viewportId: VIEWPORT_SLICE, type: Enums.ViewportType.ORTHOGRAPHIC, element: els.sliceViewport, defaultOptions: { orientation: Enums.OrientationAxis.AXIAL, background:[0,0,0] } },
+    { viewportId: VIEWPORT_SAG, type: Enums.ViewportType.ORTHOGRAPHIC, element: els.mprSagittal, defaultOptions: { orientation: Enums.OrientationAxis.SAGITTAL, background:[0,0,0] } },
+    { viewportId: VIEWPORT_COR, type: Enums.ViewportType.ORTHOGRAPHIC, element: els.mprCoronal, defaultOptions: { orientation: Enums.OrientationAxis.CORONAL, background:[0,0,0] } },
   ]);
 
   // Make sure Cornerstone/VTK has the final DOM dimensions before creating
@@ -588,13 +675,15 @@ async function configureVolume(imageIds, firstImage, meta){
   await setVolumesForViewports(
     state.engine,
     [{ volumeId: state.volumeId }],
-    [VIEWPORT_MAIN, VIEWPORT_SLICE],
+    [VIEWPORT_MAIN, VIEWPORT_SLICE, VIEWPORT_SAG, VIEWPORT_COR],
     true
   );
 
   setupVolumeTools();
   const main = state.engine.getViewport(VIEWPORT_MAIN);
   const slice = state.engine.getViewport(VIEWPORT_SLICE);
+  const sag = state.engine.getViewport(VIEWPORT_SAG);
+  const cor = state.engine.getViewport(VIEWPORT_COR);
 
   const actorEntry = main?.getDefaultActor?.();
   const actor = actorEntry?.actor;
@@ -619,13 +708,18 @@ async function configureVolume(imageIds, firstImage, meta){
 
   main.resetCamera();
   slice.resetCamera();
+  sag?.resetCamera?.();
+  cor?.resetCamera?.();
   try { main.setCamera({ parallelProjection: false }); } catch (_) {}
   applyVisualization(true);
   main.render();
   slice.render();
+  sag?.render?.();
+  cor?.render?.();
   state.engine.render();
 
   state.imageGeometry = getVolumeGeometry(state.volume, meta);
+  state.measurementCalibrated = !!(state.imageGeometry?.spacing?.length === 3 && state.imageGeometry.spacing.every(v => Number.isFinite(v) && v > 0));
   finishStudyUI({
     modality: meta.modality,
     series: meta.seriesDesc || 'DICOM SERIES',
@@ -633,6 +727,8 @@ async function configureVolume(imageIds, firstImage, meta){
     voxel: formatVolumeSpacing(state.volume, meta),
   });
   updateSlicePlane('axial', true);
+  els.orientationCube?.classList.remove('hidden');
+  snapshotAnnotations('initial');
   startOverlayLoop();
   setNotice(`Volumetric ${meta.modality || 'DICOM'} study reconstructed from ${imageIds.length} spatial frames. The 3D object and Splicer are derived from the scan data; anatomy labels remain references, not detections.`);
   hideLoading();
@@ -663,6 +759,7 @@ async function configureStack(imageIds, firstImage, meta){
   $$('.volume-only').forEach(el => el.classList.add('hidden'));
   setNotice('Single-frame DICOM detected. It remains a faithful 2D image; SCAN//SPACE does not invent a 3D body from one radiograph.');
   hideLoading();
+  snapshotAnnotations('initial');
   showToast('Single DICOM loaded locally', 2800);
 }
 
@@ -677,24 +774,23 @@ function setupVolumeTools(){
   mainGroup.addViewport(VIEWPORT_MAIN, state.engine.id);
 
   const sliceGroup = ToolGroupManager.createToolGroup(TOOLGROUP_SLICE);
-  [LengthTool, ArrowAnnotateTool, PanTool, ZoomTool, StackScrollTool].forEach(tool => sliceGroup.addTool(tool.toolName));
-  sliceGroup.setToolPassive(LengthTool.toolName);
-  sliceGroup.setToolPassive(ArrowAnnotateTool.toolName);
+  const sliceTools=[LengthTool, ArrowAnnotateTool, PanTool, ZoomTool, StackScrollTool, CrosshairsTool, ProbeTool, RectangleROITool, EllipticalROITool, CircleROITool, AngleTool, BidirectionalTool, CobbAngleTool].filter(Boolean);
+  sliceTools.forEach(tool=>{ try{ sliceGroup.addTool(tool.toolName); }catch(_){} });
+  [LengthTool,ArrowAnnotateTool,ProbeTool,RectangleROITool,EllipticalROITool,CircleROITool,AngleTool,BidirectionalTool,CobbAngleTool,CrosshairsTool].filter(Boolean).forEach(tool=>{ try{sliceGroup.setToolPassive(tool.toolName);}catch(_){} });
   sliceGroup.setToolActive(PanTool.toolName, { bindings:[{ mouseButton:csToolsEnums.MouseBindings.Auxiliary }] });
   sliceGroup.setToolActive(ZoomTool.toolName, { bindings:[{ mouseButton:csToolsEnums.MouseBindings.Secondary }] });
   sliceGroup.setToolActive(StackScrollTool.toolName, { bindings:[{ mouseButton:csToolsEnums.MouseBindings.Wheel }] });
-  sliceGroup.addViewport(VIEWPORT_SLICE, state.engine.id);
+  [VIEWPORT_SLICE,VIEWPORT_SAG,VIEWPORT_COR].forEach(id=>sliceGroup.addViewport(id, state.engine.id));
 }
 
 function setupStackTools(){
-  const group = ToolGroupManager.createToolGroup(TOOLGROUP_STACK);
-  [LengthTool, ArrowAnnotateTool, PanTool, ZoomTool, StackScrollTool].forEach(tool => group.addTool(tool.toolName));
-  group.setToolPassive(LengthTool.toolName);
-  group.setToolPassive(ArrowAnnotateTool.toolName);
-  group.setToolActive(PanTool.toolName, { bindings:[{ mouseButton:csToolsEnums.MouseBindings.Auxiliary }] });
-  group.setToolActive(ZoomTool.toolName, { bindings:[{ mouseButton:csToolsEnums.MouseBindings.Secondary }] });
-  group.setToolActive(StackScrollTool.toolName, { bindings:[{ mouseButton:csToolsEnums.MouseBindings.Wheel }] });
-  group.addViewport(VIEWPORT_MAIN, state.engine.id);
+  const group=ToolGroupManager.createToolGroup(TOOLGROUP_STACK);
+  [LengthTool,ArrowAnnotateTool,PanTool,ZoomTool,StackScrollTool,ProbeTool,RectangleROITool,EllipticalROITool,CircleROITool,AngleTool,BidirectionalTool,CobbAngleTool].filter(Boolean).forEach(tool=>{try{group.addTool(tool.toolName);}catch(_){}});
+  [LengthTool,ArrowAnnotateTool,ProbeTool,RectangleROITool,EllipticalROITool,CircleROITool,AngleTool,BidirectionalTool,CobbAngleTool].filter(Boolean).forEach(tool=>{try{group.setToolPassive(tool.toolName);}catch(_){}});
+  group.setToolActive(PanTool.toolName,{bindings:[{mouseButton:csToolsEnums.MouseBindings.Auxiliary}]});
+  group.setToolActive(ZoomTool.toolName,{bindings:[{mouseButton:csToolsEnums.MouseBindings.Secondary}]});
+  group.setToolActive(StackScrollTool.toolName,{bindings:[{mouseButton:csToolsEnums.MouseBindings.Wheel}]});
+  group.addViewport(VIEWPORT_MAIN,state.engine.id);
 }
 
 function getAnnotationToolGroup(){
@@ -702,26 +798,129 @@ function getAnnotationToolGroup(){
 }
 function setAnnotationTool(which){
   if(!state.mode) return;
-  const group = getAnnotationToolGroup();
-  if(!group) return;
-  const length = LengthTool.toolName;
-  const marker = ArrowAnnotateTool.toolName;
-  try { group.setToolPassive(length); } catch (_) {}
-  try { group.setToolPassive(marker); } catch (_) {}
-  if(state.activeTool === which){
-    state.activeTool = null;
+  const group=getAnnotationToolGroup(); if(!group) return;
+  allInteractiveAnnotationTools().forEach(t=>{try{group.setToolPassive(t.toolName);}catch(_){}});
+  if(state.activeTool===which){ state.activeTool=null; }
+  else { state.activeTool=which; const ToolClass=which==='measure'?LengthTool:ArrowAnnotateTool; try{group.setToolActive(ToolClass.toolName,{bindings:[{mouseButton:csToolsEnums.MouseBindings.Primary}]});}catch(e){console.warn(e);} }
+  clearAnnotationButtonStates();
+  els.measureTool.classList.toggle('active',state.activeTool==='measure'); els.markerTool.classList.toggle('active',state.activeTool==='marker');
+  els.measureReadout.textContent=state.activeTool==='measure'?`MEASURE ACTIVE · WORLD-SPACE LENGTH · ${state.measurementCalibrated?'DICOM CALIBRATED':'UNCALIBRATED'}`:state.activeTool==='marker'?'MARKER ACTIVE · PLACE AN ARROW AND ENTER A LABEL':'SPATIAL IMAGE TOOLS · NO DIAGNOSTIC INTERPRETATION';
+  if(!state.activeTool && state.mprMode) activateCrosshairs();
+}
+
+function allInteractiveAnnotationTools(){ return [LengthTool,ArrowAnnotateTool,ProbeTool,RectangleROITool,EllipticalROITool,CircleROITool,AngleTool,BidirectionalTool,CobbAngleTool,CrosshairsTool].filter(Boolean); }
+function clearAnnotationButtonStates(){[els.measureTool,els.markerTool,els.probeTool,els.rectRoiTool,els.ellipseRoiTool,els.identifyTool,els.angleTool,els.bidirTool,els.cobbTool].forEach(b=>b?.classList.remove('active'));}
+function setAdvancedTool(which, ToolClass, label){
+  if(!state.mode || !ToolClass){ showToast(`${label} is unavailable in this imaging-engine build`,3200); return; }
+  const group=getAnnotationToolGroup(); if(!group) return;
+  allInteractiveAnnotationTools().forEach(t=>{ try{group.setToolPassive(t.toolName);}catch(_){} });
+  state.activeTool = state.activeTool===which ? null : which;
+  clearAnnotationButtonStates();
+  if(state.activeTool){
+    try{ group.setToolActive(ToolClass.toolName,{bindings:[{mouseButton:csToolsEnums.MouseBindings.Primary}]}); }catch(e){ console.warn(e); showToast(`${label} could not be activated`,3200); return; }
+    const el=els[`${which}Tool`]; el?.classList.add('active');
+    els.measureReadout.textContent=`${label.toUpperCase()} ACTIVE · PHYSICAL DICOM SPACE`;
   } else {
-    state.activeTool = which;
-    const name = which === 'measure' ? length : marker;
-    group.setToolActive(name, { bindings:[{ mouseButton:csToolsEnums.MouseBindings.Primary }] });
+    els.measureReadout.textContent='SPATIAL IMAGE TOOLS · NO DIAGNOSTIC INTERPRETATION';
+    if(state.mprMode) activateCrosshairs();
   }
-  els.measureTool.classList.toggle('active', state.activeTool === 'measure');
-  els.markerTool.classList.toggle('active', state.activeTool === 'marker');
-  els.measureReadout.textContent = state.activeTool === 'measure'
-    ? 'MEASURE ACTIVE · DRAG BETWEEN TWO POINTS ON THE SLICE'
-    : state.activeTool === 'marker'
-      ? 'MARKER ACTIVE · PLACE AN ARROW AND ENTER A LABEL'
-      : 'SPATIAL IMAGE TOOLS · NO DIAGNOSTIC INTERPRETATION';
+}
+function activateCrosshairs(){
+  if(!CrosshairsTool || state.mode!=='volume') return;
+  const group=getAnnotationToolGroup(); if(!group) return;
+  allInteractiveAnnotationTools().forEach(t=>{try{group.setToolPassive(t.toolName);}catch(_){}});
+  try{group.setToolActive(CrosshairsTool.toolName,{bindings:[{mouseButton:csToolsEnums.MouseBindings.Primary}]}); state.activeTool='crosshairs'; els.measureReadout.textContent='MPR CROSSHAIRS · CLICK/DRAG TO SYNCHRONIZE PLANES';}catch(e){console.warn('Crosshairs unavailable',e);}
+}
+function cloneState(v){ try{return structuredClone(v);}catch(_){try{return JSON.parse(JSON.stringify(v));}catch(__){return null;}} }
+function snapshotAnnotations(reason='change'){
+  if(state.annotationSnapshotLock || !annotation?.state?.getAnnotationManager) return;
+  try{ const mgr=annotation.state.getAnnotationManager(); const snap=cloneState(mgr.saveAnnotations?.()); if(!snap) return; state.annotationHistory.push({reason,state:snap}); if(state.annotationHistory.length>60) state.annotationHistory.shift(); state.annotationRedo=[]; }catch(e){console.warn('Annotation history snapshot failed',e);}
+}
+function restoreAnnotationSnapshot(snap){
+  if(!snap || !annotation?.state?.getAnnotationManager) return;
+  try{ state.annotationSnapshotLock=true; const mgr=annotation.state.getAnnotationManager(); mgr.removeAllAnnotations?.(); mgr.restoreAnnotations?.(cloneState(snap.state)); state.engine?.render?.(); rebuildBookmarksFromAnnotations(); }finally{state.annotationSnapshotLock=false;}
+}
+function undoAnnotation(){ if(state.annotationHistory.length<2){showToast('Nothing to undo',1800);return;} const current=state.annotationHistory.pop(); state.annotationRedo.push(current); restoreAnnotationSnapshot(state.annotationHistory[state.annotationHistory.length-1]); showToast('Annotation change undone',1800); }
+function redoAnnotation(){ const next=state.annotationRedo.pop(); if(!next){showToast('Nothing to redo',1800);return;} state.annotationHistory.push(next); restoreAnnotationSnapshot(next); showToast('Annotation change restored',1800); }
+function rebuildBookmarksFromAnnotations(){
+  const anns=annotation?.state?.getAllAnnotations?.()||[]; state.bookmarks=[];
+  for(const ann of anns){ if(ann?.metadata?.toolName===ArrowAnnotateTool?.toolName){ const p=ann.data?.handles?.points?.[0]; if(p) state.bookmarks.push({uid:ann.annotationUID,world:[...p],label:ann.data?.text||ann.data?.label||`Marker ${state.bookmarks.length+1}`}); }}
+  renderBookmarks();
+}
+function renderBookmarks(){
+  if(!els.bookmarkList) return; els.bookmarkCount.textContent=String(state.bookmarks.length);
+  if(!state.bookmarks.length){els.bookmarkList.className='bookmark-list empty';els.bookmarkList.textContent='No saved markers yet.';return;}
+  els.bookmarkList.className='bookmark-list'; els.bookmarkList.innerHTML=state.bookmarks.map((b,i)=>`<button class="bookmark-item" data-bookmark="${i}"><span>${escapeHtml(b.label||`Marker ${i+1}`)}</span><small>GO TO</small></button>`).join('');
+  els.bookmarkList.querySelectorAll('[data-bookmark]').forEach(btn=>btn.addEventListener('click',()=>goToBookmark(state.bookmarks[+btn.dataset.bookmark])));
+}
+async function goToBookmark(b){
+  if(!b?.world || state.mode!=='volume') return;
+  for(const id of [VIEWPORT_SLICE,VIEWPORT_SAG,VIEWPORT_COR]){ const vp=state.engine?.getViewport?.(id); try{ vp?.jumpToWorld?.(b.world); }catch(_){ try{utilities.jumpToWorld?.(vp,b.world);}catch(__){} } }
+  const main=state.engine?.getViewport?.(VIEWPORT_MAIN); const cam=main?.getCamera?.(); if(cam?.position&&cam?.focalPoint){const d=[b.world[0]-cam.focalPoint[0],b.world[1]-cam.focalPoint[1],b.world[2]-cam.focalPoint[2]];try{main.setCamera({focalPoint:b.world,position:[cam.position[0]+d[0],cam.position[1]+d[1],cam.position[2]+d[2]]});}catch(_){}}
+  try{state.engine.render();}catch(_){} showToast(b.label||'Marker',1600);
+}
+function statsSummary(ann){
+  const stats=ann?.data?.cachedStats||{}; const values=Object.values(stats); const st=values.find(v=>v&&typeof v==='object')||{};
+  const fields=[]; for(const [k,label] of [['mean','MEAN'],['max','MAX'],['min','MIN'],['stdDev','SD'],['area','AREA'],['length','LENGTH'],['width','WIDTH'],['angle','ANGLE']]){ if(Number.isFinite(st[k])) fields.push(`${label} ${Number(st[k]).toFixed(k==='area'?1:2)}`); } return fields.join(' · ');
+}
+
+function installAnnotationLifecycle(){
+  if(state.annotationListenerInstalled || !eventTarget || !csToolsEnums?.Events?.ANNOTATION_COMPLETED) return;
+  eventTarget.addEventListener(csToolsEnums.Events.ANNOTATION_COMPLETED, (evt) => {
+    const ann = evt?.detail?.annotation; if(!ann) return; const toolName=ann.metadata?.toolName;
+    if(toolName === LengthTool?.toolName){ const pts=ann.data?.handles?.points||[]; if(pts.length>=2){const a=pts[0],b=pts[1],mm=Math.hypot(b[0]-a[0],b[1]-a[1],b[2]-a[2]);els.measureReadout.textContent=`MEASURE SAVED · ${mm.toFixed(1)} mm · ${state.measurementCalibrated?'DICOM WORLD-SPACE':'UNCALIBRATED'}`;} }
+    else if(toolName === ArrowAnnotateTool?.toolName){ const p=ann.data?.handles?.points?.[0]; if(p){state.bookmarks.push({uid:ann.annotationUID,world:[...p],label:ann.data?.text||ann.data?.label||`Marker ${state.bookmarks.length+1}`});renderBookmarks();} els.measureReadout.textContent='MARKER SAVED · BOOKMARKED FOR THIS STUDY SESSION'; }
+    else if(toolName === CircleROITool?.toolName && state.activeTool === 'identify'){ handleCircleIdentify(ann); }
+    else { const summary=statsSummary(ann); els.measureReadout.textContent=summary ? `${toolName} · ${summary}` : `${toolName || 'ANNOTATION'} SAVED · DICOM WORLD SPACE`; }
+    snapshotAnnotations(toolName||'annotation'); try{state.engine?.render();}catch(_){}
+  });
+  state.annotationListenerInstalled = true;
+}
+
+function clearMeasurementsKeepMarkers(){
+  const all=annotation?.state?.getAllAnnotations?.()||[]; let removed=0;
+  const removable=new Set([LengthTool,ProbeTool,RectangleROITool,EllipticalROITool,CircleROITool,AngleTool,BidirectionalTool,CobbAngleTool].filter(Boolean).map(t=>t.toolName));
+  for(const ann of all){ if(removable.has(ann?.metadata?.toolName)&&ann.annotationUID){try{annotation.state.removeAnnotation(ann.annotationUID);removed++;}catch(_){}} }
+  try{state.engine?.render();}catch(_){} if(removed)snapshotAnnotations('clear measurements');
+  showToast(removed?`Cleared ${removed} measurement/ROI annotation${removed===1?'':'s'} · markers preserved`:'No measurements or ROIs to clear · markers preserved',2600);
+}
+
+function setZoomForViewport(viewport, factor){
+  if(!viewport?.getZoom || !viewport?.setZoom) return;
+  try {
+    const current = Number(viewport.getZoom()) || 1;
+    const next = clamp(current * factor, .15, 12);
+    viewport.setZoom(next);
+    viewport.render?.();
+  } catch (e) { console.warn('Zoom adjustment failed', e); }
+}
+
+function skeletalThresholdFraction(){
+  const [min,max] = state.scalarRange || [0,255];
+  const span = Math.max(1e-6, max-min);
+  if(String(state.modality || '').toUpperCase() === 'CT' && min < 250 && max > 250){
+    return clamp((250-min)/span, .05, .80);
+  }
+  return .52;
+}
+
+function applySkeletalPreset(){
+  state.skeletonPreset = true;
+  state.colorMode = 'skeletal';
+  state.brightness = 80;
+  state.contrast = 1.45;
+  state.threshold = skeletalThresholdFraction();
+  state.opacity = 1;
+  state.density = Math.max(state.density, .85);
+  els.brightness.value = '80'; els.brightnessOut.textContent = '+80';
+  els.contrast.value = '145'; els.contrastOut.textContent = '145%';
+  els.threshold.value = String(Math.round(state.threshold*100)); els.thresholdOut.textContent = `${Math.round(state.threshold*100)}%`;
+  els.opacity.value = '100'; els.opacityOut.textContent = '100%';
+  els.density.value = String(Math.round(state.density*100)); els.densityOut.textContent = `${Math.round(state.density*100)}%`;
+  setNotice(String(state.modality||'').toUpperCase()==='CT'
+    ? 'SKELETAL MODE · high-density CT voxels emphasized using a bone-oriented threshold and maximum brightness. Visualization only; not a diagnostic bone segmentation.'
+    : 'SKELETAL MODE · high-intensity structures emphasized. Non-CT modalities do not map intensity to bone density reliably, so this is an approximate visualization preset.');
+  applyVisualization();
 }
 
 function applyStackVOI(){
@@ -766,29 +965,61 @@ function getActorScalarRange(actor){
 }
 
 function effectiveVOIRange(){
-  const base = state.voiRange || { lower:state.scalarRange[0], upper:state.scalarRange[1] };
+  const base = state.presetVOI || state.voiRange || { lower:state.scalarRange[0], upper:state.scalarRange[1] };
   const rawSpan = Math.max(1e-6, base.upper - base.lower);
   const center = (base.lower + base.upper)/2 + (state.brightness/80) * rawSpan * .4;
   const span = rawSpan / Math.max(.3, state.contrast);
   return { lower:center-span/2, upper:center+span/2 };
 }
 
+const CT_PRESETS = {
+  soft:{name:'SOFT TISSUE',center:40,width:400},
+  lung:{name:'LUNG',center:-600,width:1500},
+  bone:{name:'BONE',center:400,width:1800},
+  brain:{name:'BRAIN',center:40,width:80},
+  abdomen:{name:'ABDOMEN',center:50,width:350},
+  vessel:{name:'VESSEL',center:200,width:600},
+};
+function applyWindowPreset(key){
+  const p=CT_PRESETS[key]; if(!p) return;
+  state.skeletonPreset=false; state.presetVOI={lower:p.center-p.width/2,upper:p.center+p.width/2}; state.brightness=0; state.contrast=1;
+  els.brightness.value='0'; els.brightnessOut.textContent='0'; els.contrast.value='100'; els.contrastOut.textContent='100%';
+  $$('#windowPresets button').forEach(b=>b.classList.toggle('active',b.dataset.preset===key));
+  setNotice(`${p.name} PRESET · deterministic window/level visualization. No diagnosis or tissue detection is performed.`);
+  applyVisualization();
+}
+function clearWindowPreset(){ state.presetVOI=null; $$('#windowPresets button').forEach(b=>b.classList.remove('active')); }
+
 function applyVisualization(forceVisible=false){
   if(state.mode === 'stack'){ applyStackVOI(); return; }
   if(state.mode !== 'volume') return;
   const main = state.engine.getViewport(VIEWPORT_MAIN);
   const slice = state.engine.getViewport(VIEWPORT_SLICE);
+  const sag = state.engine.getViewport(VIEWPORT_SAG);
+  const cor = state.engine.getViewport(VIEWPORT_COR);
   let { lower, upper } = effectiveVOIRange();
   // 3D rendering must be driven by the actual actor scalar range. VOI remains
   // useful for MPR display, but a narrow or mismatched VOI can make an entire
   // ray-cast volume transparent.
   const actor = main?.getDefaultActor?.()?.actor;
   const actorRange = actor ? getActorScalarRange(actor) : null;
+  let sliceVOI = {lower,upper};
   if(actorRange){
     const [amin, amax] = actorRange;
-    if(forceVisible || upper <= amin || lower >= amax || (upper-lower) < (amax-amin)*0.01){
+    if(state.colorMode === 'skeletal'){
+      // Skeletal volume rendering needs the full calibrated scalar range so the
+      // threshold can target high-density voxels. Keep the MPR slice on a
+      // bone-oriented CT window where possible.
+      lower = amin; upper = amax;
+      if(String(state.modality||'').toUpperCase() === 'CT'){
+        sliceVOI = {lower:Math.max(amin,-500), upper:Math.min(amax,1500)};
+      } else {
+        sliceVOI = {lower:amin + (amax-amin)*.30, upper:amax};
+      }
+    } else if(forceVisible || upper <= amin || lower >= amax || (upper-lower) < (amax-amin)*0.01){
       lower = amin;
       upper = amax;
+      sliceVOI = {lower,upper};
     }
   }
   const rangeSpan = Math.max(1e-6, upper-lower);
@@ -799,12 +1030,13 @@ function applyVisualization(forceVisible=false){
   // rotation/zoom we temporarily raise the multiplier further (fewer samples)
   // and restore the selected quality when interaction stops.
   applySampleQuality(state.interactiveQuality, false);
-  try { slice.setProperties({ voiRange:{lower,upper} }); } catch (_) {}
+  for(const vp of [slice,sag,cor]){ try { vp?.setProperties?.({ voiRange:sliceVOI }); } catch (_) {} }
 
-  for(const [vp, isMain] of [[main,true],[slice,false]]){
+  for(const [vp, isMain] of [[main,true],[slice,false],[sag,false],[cor,false]]){
     const actorEntry = vp?.getDefaultActor?.();
     const prop = actorEntry?.actor?.getProperty?.();
     if(!prop) continue;
+    if(isMain){ try{prop.setShade?.(!!state.shading); if(state.shading){prop.setAmbient?.(.28);prop.setDiffuse?.(.72);prop.setSpecular?.(.18);prop.setSpecularPower?.(12);}}catch(_){} }
     const cfun = prop.getRGBTransferFunction?.(0);
     const ofun = prop.getScalarOpacity?.(0);
     if(cfun){
@@ -833,7 +1065,7 @@ function applyVisualization(forceVisible=false){
       }
     }
   }
-  try { state.engine.renderViewports([VIEWPORT_MAIN, VIEWPORT_SLICE]); } catch (_) { main.render(); slice.render(); }
+  try { state.engine.renderViewports([VIEWPORT_MAIN, VIEWPORT_SLICE, VIEWPORT_SAG, VIEWPORT_COR]); } catch (_) { main.render(); slice.render(); sag?.render?.(); cor?.render?.(); }
 }
 
 function qualitySampleMultiplier(interactive=false){
@@ -881,6 +1113,8 @@ function addColorTransferPoints(cfun, low, high, mode){
   const p = (t,r,g,b) => cfun.addRGBPoint(low + span*t, r,g,b);
   if(mode === 'thermal'){
     p(0,.01,.02,.09); p(.18,0,.22,.72); p(.40,0,.85,1); p(.62,.28,1,.35); p(.78,1,.88,.05); p(1,1,.08,.015);
+  } else if(mode === 'skeletal'){
+    p(0,0,0,0); p(.45,.03,.03,.03); p(.62,.44,.44,.42); p(.78,.82,.82,.78); p(.90,.97,.97,.92); p(1,1,1,.98);
   } else if(mode === 'real'){
     // Physically inspired pseudo-color only: warm soft tissue / ivory high-density structures.
     p(0,.05,.025,.018); p(.18,.18,.055,.035); p(.38,.52,.18,.11); p(.58,.80,.42,.28); p(.74,.95,.70,.54); p(.90,.95,.88,.74); p(1,1,.98,.90);
@@ -889,9 +1123,16 @@ function addColorTransferPoints(cfun, low, high, mode){
   }
 }
 
+function setSliceOrientationLabels(plane){
+  const labels=els.sliceDock?.querySelectorAll?.('.orientation-label'); if(!labels?.length)return;
+  const map={axial:{top:'A',bottom:'P',left:'R',right:'L'},sagittal:{top:'S',bottom:'I',left:'A',right:'P'},coronal:{top:'S',bottom:'I',left:'R',right:'L'}}[plane]||{};
+  for(const el of labels){ for(const pos of ['top','bottom','left','right']) if(el.classList.contains(pos)) el.textContent=map[pos]||''; }
+}
+
 async function updateSlicePlane(plane, reset=false){
   if(state.mode !== 'volume') return;
   state.plane = plane;
+  setSliceOrientationLabels(plane);
   $$('#planeMode button').forEach(b => b.classList.toggle('active', b.dataset.plane === plane));
   const vp = state.engine.getViewport(VIEWPORT_SLICE);
   const orient = plane === 'sagittal' ? Enums.OrientationAxis.SAGITTAL : plane === 'coronal' ? Enums.OrientationAxis.CORONAL : Enums.OrientationAxis.AXIAL;
@@ -929,6 +1170,7 @@ function updateSliceUI(){
   els.sliceTitle.textContent = `${state.plane.toUpperCase()} SLICE`;
   els.sliceIndexLabel.textContent = `${idx+1} / ${n}`;
   els.hudPosition.textContent = `${state.plane.toUpperCase()} · ${idx+1}/${n}`;
+  drawSliceAnatomyOverlay();
 }
 
 function startOverlayLoop(){
@@ -1000,6 +1242,61 @@ function drawWorldOverlay(){
       els.anatomyFocusLabel.textContent = state.isolationActive ? `${state.selectedAnatomy.name} · ROI` : state.selectedAnatomy.name;
     } else els.anatomyFocusGroup.classList.add('hidden');
   } else els.anatomyFocusGroup.classList.add('hidden');
+  drawSliceAnatomyOverlay();
+}
+
+function drawSliceAnatomyOverlay(){
+  if(state.mode !== 'volume' || !state.isolationActive || !state.selectedAnatomyWorld || !state.selectedAnatomy || state.sliceMinimized){
+    els.sliceAnatomyOverlay?.classList.add('hidden');
+    return;
+  }
+  const vp = state.engine?.getViewport?.(VIEWPORT_SLICE);
+  if(!vp) return;
+  try {
+    const r = els.sliceViewport.getBoundingClientRect();
+    if(!r.width || !r.height) return;
+    const g = state.imageGeometry;
+    const cam = vp.getCamera?.();
+    if(g && cam?.focalPoint && cam?.viewPlaneNormal){
+      const vpn = norm(cam.viewPlaneNormal);
+      const delta = [state.selectedAnatomyWorld[0]-cam.focalPoint[0],state.selectedAnatomyWorld[1]-cam.focalPoint[1],state.selectedAnatomyWorld[2]-cam.focalPoint[2]];
+      const planeDistance = Math.abs(dot(delta,vpn));
+      let roiHalfThickness = 0;
+      for(let i=0;i<3;i++){
+        const halfWorld = g.lengths[i] * (state.selectedAnatomy.size?.[i] || .15) * .5;
+        roiHalfThickness += Math.abs(dot(g.axes[i],vpn)) * halfWorld;
+      }
+      if(planeDistance > roiHalfThickness){
+        els.sliceAnatomyOverlay.classList.add('hidden');
+        return;
+      }
+    }
+    const center = vp.worldToCanvas(state.selectedAnatomyWorld);
+    if(!center?.length) return;
+    let radius = Math.min(r.width,r.height) * .10;
+    if(g){
+      const candidates=[];
+      for(let i=0;i<3;i++){
+        const halfWorld = g.lengths[i] * (state.selectedAnatomy.size?.[i] || .15) * .5;
+        const q = vp.worldToCanvas(add(state.selectedAnatomyWorld, mul(g.axes[i], halfWorld)));
+        if(q?.length) candidates.push(Math.hypot(q[0]-center[0], q[1]-center[1]));
+      }
+      const visible = candidates.filter(v=>Number.isFinite(v) && v>4).sort((a,b)=>b-a);
+      if(visible.length) radius = visible[Math.min(1,visible.length-1)] || visible[0];
+    }
+    radius = clamp(radius, 18, Math.min(92, Math.min(r.width,r.height)*.28));
+    els.sliceAnatomyOverlay.setAttribute('viewBox', `0 0 ${Math.max(1,r.width)} ${Math.max(1,r.height)}`);
+    els.sliceAnatomyOverlay.classList.remove('hidden');
+    els.sliceAnatomyRing.setAttribute('cx', center[0]); els.sliceAnatomyRing.setAttribute('cy', center[1]); els.sliceAnatomyRing.setAttribute('r', radius);
+    els.sliceAnatomyH.setAttribute('x1', center[0]-radius*.32); els.sliceAnatomyH.setAttribute('x2', center[0]+radius*.32); els.sliceAnatomyH.setAttribute('y1',center[1]); els.sliceAnatomyH.setAttribute('y2',center[1]);
+    els.sliceAnatomyV.setAttribute('x1', center[0]); els.sliceAnatomyV.setAttribute('x2', center[0]); els.sliceAnatomyV.setAttribute('y1',center[1]-radius*.32); els.sliceAnatomyV.setAttribute('y2',center[1]+radius*.32);
+    els.sliceAnatomyLabel.setAttribute('x', clamp(center[0]+radius+8, 6, Math.max(6,r.width-150)));
+    els.sliceAnatomyLabel.setAttribute('y', clamp(center[1]-radius*.45, 14, Math.max(14,r.height-8)));
+    els.sliceAnatomyLabel.textContent = `${state.selectedAnatomy.name} · REFERENCE ROI`;
+  } catch (e) {
+    console.warn('Could not draw anatomy target on slice', e);
+    els.sliceAnatomyOverlay?.classList.add('hidden');
+  }
 }
 function setLine(el,a,b){ el.setAttribute('x1',a[0]);el.setAttribute('y1',a[1]);el.setAttribute('x2',b[0]);el.setAttribute('y2',b[1]); }
 function setText(el,p,t){ el.setAttribute('x',p[0]+6);el.setAttribute('y',p[1]-6);el.textContent=t; }
@@ -1049,10 +1346,14 @@ function finishStudyUI(info){
   resizeOverlay();
 }
 
+function formatDicomDate(v){ if(!v||v.length<8)return v||'—'; return `${v.slice(0,4)}-${v.slice(4,6)}-${v.slice(6,8)}`; }
 function updateMetadata(info){
-  const rows = [['Modality',info.modality],['Series',info.series],['Dimensions',info.dimensions],['Voxel',info.voxel]];
-  els.metadataList.innerHTML = rows.map(([k,v]) => `<div><dt>${escapeHtml(k)}</dt><dd title="${escapeHtml(v)}">${escapeHtml(v)}</dd></div>`).join('');
+  const m=state.seriesMeta||{};
+  const rows=[['Modality',info.modality],['Series',info.series],['Series #',m.seriesNumber||'—'],['Dimensions',info.dimensions],['Voxel',info.voxel],['Frames',state.mode==='volume'?(state.volume?.dimensions?.[2]||state.stackImageIds.length||'—'):'1'],['Slice thickness',m.sliceThickness?`${m.sliceThickness} mm`:'—'],['Study date',formatDicomDate(m.studyDate||m.acquisitionDate)],['Patient position',m.patientPosition||'—'],['Manufacturer',m.manufacturer||'—'],['Scanner',m.model||'—']];
+  if(m.contrastAgent)rows.push(['Contrast',m.contrastAgent]); if(m.kVp)rows.push(['kVp',m.kVp]); if(m.magneticFieldStrength)rows.push(['Field strength',`${m.magneticFieldStrength} T`]);
+  els.metadataList.innerHTML=rows.map(([k,v])=>`<div><dt>${escapeHtml(k)}</dt><dd title="${escapeHtml(v)}">${escapeHtml(v)}</dd></div>`).join('');
 }
+
 function catalogForRegion(region=state.region){
   const exact = ANATOMY_CATALOG.filter(item => item.regions.includes(region));
   if(exact.length) return exact;
@@ -1126,6 +1427,112 @@ function normalizedPointToWorld(normPoint){
   let p = [...g.origin];
   for(let i=0;i<3;i++) p = add(p, mul(g.axes[i], g.lengths[i] * clamp(normPoint[i],0,1)));
   return p;
+}
+
+
+function worldToNormalized(world){
+  const g = state.imageGeometry;
+  if(!g || !world) return null;
+  const rel = [world[0]-g.origin[0], world[1]-g.origin[1], world[2]-g.origin[2]];
+  return g.axes.map((axis,i) => clamp(dot(rel,axis) / Math.max(1e-6,g.lengths[i]), 0, 1));
+}
+
+function identifyAnatomyAtWorld(world, circleRadiusMm=0, roiMean=null){
+  const normPoint = worldToNormalized(world);
+  if(!normPoint) return [];
+  const candidates = catalogForRegion(state.region);
+  const modality = String(state.modality || '').toUpperCase();
+  const boneName = /skull|rib|sternum|spine|vertebra|sacrum|pelvis|femur|tibia|fibula|humerus|radius|ulna|patella|mandible|maxilla|teeth|bone/i;
+  const airName = /lung|trachea|airway|sinus|nasal cavity/i;
+  const ranked = candidates.map(item => {
+    const half = item.size.map(v => Math.max(.045, v/2));
+    const delta = item.center.map((v,i) => Math.abs(normPoint[i]-v));
+    const scaled = delta.map((v,i) => v/half[i]);
+    const rawDist = Math.hypot(...delta) / Math.sqrt(3);
+    const shapeDist = Math.hypot(...scaled) / Math.sqrt(3);
+    const inside = scaled.every(v => v <= 1.05);
+    let score = 100 - shapeDist*38 - rawDist*85 + (inside ? 12 : 0);
+    if(circleRadiusMm > 0 && state.imageGeometry){
+      const roiNorm = circleRadiusMm / Math.max(1,state.imageGeometry.maxExtent);
+      const structureScale = (item.size[0]+item.size[1]+item.size[2])/6;
+      const sizePenalty = Math.min(20, Math.abs(roiNorm-structureScale)*55);
+      score -= sizePenalty;
+    }
+    // Deterministic CT intensity hint: only a small reranking bonus. Spatial
+    // location remains primary, and the UI never calls this a detection.
+    if(modality === 'CT' && Number.isFinite(roiMean)){
+      if(roiMean < -450){ score += airName.test(item.name) ? 18 : -4; }
+      else if(roiMean > 250){ score += (boneName.test(item.name) || /SKELETAL|CERVICAL SPINE|DENTAL/.test(item.group)) ? 18 : -4; }
+      else if(roiMean > -120 && roiMean < 220){ score += /THORACIC|ABDOMINAL|URINARY|PELVIC|VASCULAR|SOFT TISSUE|CRANIAL/.test(item.group) ? 4 : 0; }
+    }
+    return {item, score:clamp(score,0,100), inside, rawDist, normPoint, roiMean};
+  }).sort((a,b)=>b.score-a.score);
+  return ranked.slice(0,5);
+}
+
+function circleAnnotationCenterAndRadius(ann){
+  const pts = ann?.data?.handles?.points || [];
+  let center = ann?.data?.handles?.center;
+  if(!Array.isArray(center) || center.length < 3) center = pts[0];
+  if(!center || center.length < 3) return null;
+  let radius = 0;
+  if(pts.length >= 2){
+    const edge = pts[1];
+    radius = Math.hypot(edge[0]-center[0], edge[1]-center[1], edge[2]-center[2]);
+  }
+  return {center:[center[0],center[1],center[2]], radius};
+}
+
+function renderIdentifyMatches(matches, centerWorld){
+  if(!els.identifyResult || !els.identifyCandidates || !els.identifySummary) return;
+  state.identifyMatches = matches;
+  state.identifyCenterWorld = centerWorld ? [...centerWorld] : null;
+  els.identifyResult.classList.remove('hidden');
+  if(!matches.length){
+    els.identifySummary.textContent = 'No anatomical reference in the current study region is close enough to this ROI.';
+    els.identifyCandidates.innerHTML = '';
+    return;
+  }
+  const best = matches[0];
+  const strength = best.score >= 78 ? 'STRONG' : best.score >= 58 ? 'MODERATE' : 'WEAK';
+  els.identifySummary.innerHTML = `Closest reference: <b>${escapeHtml(best.item.name)}</b>. Spatial match ${strength.toLowerCase()} (${Math.round(best.score)}/100). This compares location with the anatomy atlas; it does not detect tissue or diagnose the circled object.`;
+  els.identifyCandidates.innerHTML = matches.slice(0,3).map((m,i)=>`<button class="identify-candidate" data-identify-index="${i}"><span><b>${escapeHtml(m.item.name)}</b><small>${escapeHtml(m.item.group)} · ${escapeHtml(m.item.regions.join(' / '))}</small></span><em>${Math.round(m.score)}/100</em></button>`).join('') + '<div class="identify-note">Click a candidate to select/focus that anatomical reference. Exact structure naming requires a registered atlas or segmentation; this tool is deterministic and non-AI.</div>';
+  els.identifyCandidates.querySelectorAll('[data-identify-index]').forEach(btn=>btn.addEventListener('click',()=>{
+    const match=state.identifyMatches[+btn.dataset.identifyIndex];
+    if(!match) return;
+    els.anatomySearch.value=match.item.name;
+    selectAnatomy(match.item,{autoIsolate:false});
+  }));
+}
+
+function annotationMeanValue(ann){
+  const stats = ann?.data?.cachedStats || {};
+  for(const value of Object.values(stats)){
+    if(value && typeof value === 'object' && Number.isFinite(value.mean)) return Number(value.mean);
+  }
+  return null;
+}
+
+function handleCircleIdentify(ann){
+  const geometry = circleAnnotationCenterAndRadius(ann);
+  if(!geometry){
+    showToast('Could not read the circled ROI geometry',2600);
+    return;
+  }
+  if(state.mode !== 'volume' || !state.imageGeometry){
+    els.identifyResult?.classList.remove('hidden');
+    if(els.identifySummary) els.identifySummary.textContent='Circle & Identify needs a calibrated volumetric DICOM study so the ROI can be mapped into patient/world coordinates.';
+    if(els.identifyCandidates) els.identifyCandidates.innerHTML='';
+    return;
+  }
+  const roiMean = annotationMeanValue(ann);
+  const matches = identifyAnatomyAtWorld(geometry.center, geometry.radius, roiMean);
+  renderIdentifyMatches(matches, geometry.center);
+  if(Number.isFinite(roiMean) && els.identifySummary) els.identifySummary.innerHTML += ` <span class="identify-hu">ROI mean ${roiMean.toFixed(1)}${String(state.modality||'').toUpperCase()==='CT' ? ' HU' : ''}.</span>`;
+  if(matches[0]){
+    els.measureReadout.textContent=`IDENTIFY · CLOSEST REFERENCE ${matches[0].item.name.toUpperCase()} · ${Math.round(matches[0].score)}/100 · NOT A DETECTION`;
+    showToast(`Reference match: ${matches[0].item.name} · ${Math.round(matches[0].score)}/100`,3200);
+  }
 }
 
 function anatomyWorldBounds(item){
@@ -1207,52 +1614,180 @@ async function focusSelectedAnatomy(){
   showToast(`${item.name} · reference focus`, 2200);
 }
 
+function anatomyClipPlanes(item){
+  const g = state.imageGeometry;
+  if(!g || !vtkPlane) return [];
+  const context=clamp(state.isolationContext||0,0,1);
+  const half = item.size.map(v => (v/2)*(1-context) + .5*context);
+  const lo = item.center.map((v,i) => clamp(v - half[i], 0, 1));
+  const hi = item.center.map((v,i) => clamp(v + half[i], 0, 1));
+  const planes = [];
+
+  // VTK clipping keeps the positive side of each plane. Build six inward-facing
+  // planes in the scan's own I/J/K axes, so oblique acquisitions are handled
+  // correctly instead of approximating the ROI with a world-axis-aligned box.
+  for(let axisIndex = 0; axisIndex < 3; axisIndex++){
+    const axis = g.axes[axisIndex];
+    const centerPoint = [...item.center];
+
+    const minPoint = [...centerPoint];
+    minPoint[axisIndex] = lo[axisIndex];
+    const minOrigin = normalizedPointToWorld(minPoint);
+    planes.push(vtkPlane.newInstance({ origin:minOrigin, normal:[...axis] }));
+
+    const maxPoint = [...centerPoint];
+    maxPoint[axisIndex] = hi[axisIndex];
+    const maxOrigin = normalizedPointToWorld(maxPoint);
+    planes.push(vtkPlane.newInstance({ origin:maxOrigin, normal:axis.map(v => -v) }));
+  }
+  return planes;
+}
+
+function applyFixedROIPlanes({render=true}={}){
+  if(!state.isolationActive || !state.roiClipPlanes?.length) return false;
+  const { main, actor, mapper } = getMainActorMapper();
+  if(!main || !mapper) return false;
+  try {
+    if(typeof mapper.removeAllClippingPlanes === 'function') mapper.removeAllClippingPlanes();
+    if(typeof mapper.setClippingPlanes === 'function'){
+      mapper.setClippingPlanes(state.roiClipPlanes);
+    } else if(typeof mapper.addClippingPlane === 'function'){
+      for(const plane of state.roiClipPlanes) mapper.addClippingPlane(plane);
+    } else {
+      return false;
+    }
+    mapper.modified?.();
+    actor?.modified?.();
+    if(render) main.render?.();
+    return true;
+  } catch (e) {
+    console.warn('Could not reapply fixed anatomy ROI planes', e);
+    return false;
+  }
+}
+
+function installROICameraGuard(){
+  if(state.mode !== 'volume' || !state.engine) return;
+  const main = state.engine.getViewport(VIEWPORT_MAIN);
+  if(!main || state.roiCameraGuardInstalled) return;
+
+  // Cornerstone's BaseVolumeViewport normally updates actor clipping-plane
+  // orientation whenever the camera changes. That is useful for slab/slice
+  // viewports, but an anatomy-isolation box must remain fixed in patient/world
+  // space while the user orbits the 3D camera. Override the instance method
+  // only while isolation is active; restore it when the ROI is reset.
+  if(typeof main.updateClippingPlanesForActors === 'function'){
+    state.roiClipUpdaterOriginal = main.updateClippingPlanesForActors;
+    main.updateClippingPlanesForActors = async function(updatedCamera){
+      if(state.isolationActive){
+        if(state.roiReapplyRAF) cancelAnimationFrame(state.roiReapplyRAF);
+        state.roiReapplyRAF = requestAnimationFrame(() => {
+          state.roiReapplyRAF = 0;
+          applyFixedROIPlanes({render:true});
+        });
+        return;
+      }
+      return state.roiClipUpdaterOriginal?.call(this, updatedCamera);
+    };
+  }
+
+  const cameraEvent = Enums?.Events?.CAMERA_MODIFIED;
+  if(cameraEvent){
+    const onCameraModified = () => {
+      if(!state.isolationActive) return;
+      if(state.roiReapplyRAF) cancelAnimationFrame(state.roiReapplyRAF);
+      state.roiReapplyRAF = requestAnimationFrame(() => {
+        state.roiReapplyRAF = 0;
+        applyFixedROIPlanes({render:true});
+      });
+    };
+    els.volumeViewport.addEventListener(cameraEvent, onCameraModified);
+    state.roiCameraGuardHandler = onCameraModified;
+  }
+  state.roiCameraGuardInstalled = true;
+}
+
+function removeROICameraGuard(){
+  if(state.roiReapplyRAF){
+    cancelAnimationFrame(state.roiReapplyRAF);
+    state.roiReapplyRAF = 0;
+  }
+  const main = state.mode === 'volume' && state.engine ? state.engine.getViewport(VIEWPORT_MAIN) : null;
+  if(main && state.roiClipUpdaterOriginal){
+    main.updateClippingPlanesForActors = state.roiClipUpdaterOriginal;
+  }
+  if(state.roiCameraGuardHandler){
+    const cameraEvent = Enums?.Events?.CAMERA_MODIFIED;
+    if(cameraEvent) els.volumeViewport.removeEventListener(cameraEvent, state.roiCameraGuardHandler);
+  }
+  state.roiClipUpdaterOriginal = null;
+  state.roiCameraGuardHandler = null;
+  state.roiCameraGuardInstalled = false;
+}
+
+function updateIsolationContext(value){
+  state.isolationContext=clamp(value/100,0,1); if(els.roiContextOut)els.roiContextOut.textContent=`${Math.round(value)}%`;
+  if(!state.isolationActive||!state.selectedAnatomy)return;
+  state.roiClipPlanes=anatomyClipPlanes(state.selectedAnatomy); applyFixedROIPlanes({render:true}); drawSliceAnatomyOverlay();
+}
+
 function isolateSelectedAnatomy(){
   const item = state.selectedAnatomy;
   if(!item || state.mode !== 'volume') return;
   const bounds = anatomyWorldBounds(item);
-  const { main, mapper } = getMainActorMapper();
+  const { main, actor, mapper } = getMainActorMapper();
   if(!bounds || !mapper){
-    showToast('This volume does not expose a crop-capable 3D mapper.', 4200);
+    showToast('This volume does not expose a clip-capable 3D mapper.', 4200);
     return;
   }
   try {
-    if(typeof mapper.setCropping === 'function') mapper.setCropping(true);
-    else if(typeof mapper.croppingOn === 'function') mapper.croppingOn();
-    else throw new Error('cropping API unavailable');
+    const planes = anatomyClipPlanes(item);
+    if(planes.length !== 6) throw new Error('Could not construct six ROI clipping planes');
 
-    if(typeof mapper.setCroppingRegionPlanes === 'function'){
-      try { mapper.setCroppingRegionPlanes(...bounds); }
-      catch (_) { mapper.setCroppingRegionPlanes(bounds); }
-    } else {
-      throw new Error('cropping planes API unavailable');
-    }
-    if(typeof mapper.setCroppingRegionFlagsToSubVolume === 'function') mapper.setCroppingRegionFlagsToSubVolume();
+    // vtkVolumeMapper inherits the hardware clipping-plane API from
+    // vtkAbstractMapper. This is supported by the mapper Cornerstone uses,
+    // unlike the vtkImageCropping API that was attempted in the prior build.
+    state.roiClipPlanes = planes;
     state.isolationActive = true;
     state.isolationBounds = bounds;
+    installROICameraGuard();
+    if(!applyFixedROIPlanes({render:false})){
+      throw new Error('VTK clipping-plane API unavailable on this volume mapper');
+    }
+    mapper.modified?.();
+    actor?.modified?.();
     try { main.render(); } catch (_) { state.engine.renderViewport(VIEWPORT_MAIN); }
     els.isolateAnatomy.textContent = 'ROI ISOLATED';
     els.selectionMode.textContent = 'REFERENCE ROI';
-    setNotice(`${item.name}: the 3D render is cropped to a predefined anatomical reference ROI. This is spatial isolation, not patient-specific segmentation or diagnosis.`);
+    setNotice(`${item.name}: the 3D patient volume is isolated to a fixed anatomical reference ROI. Orbit, pan, and zoom now move the camera around the intact isolated volume; the ROI does not rotate into slice planes. This is spatial isolation, not patient-specific organ segmentation or diagnosis.`);
     showToast(`${item.name} · reference ROI isolated`, 3000);
   } catch (e) {
-    console.warn('SCAN//SPACE ROI crop unavailable', e);
-    showToast('ROI cropping is unavailable in this renderer; focus was preserved.', 4200);
+    console.warn('SCAN//SPACE ROI clipping unavailable', e);
+    setNotice(`Could not isolate ${item.name}: ${e?.message || e}. Reference focus is still active.`);
+    showToast(`ROI isolation failed: ${e?.message || 'renderer clipping unavailable'}`, 5200);
   }
 }
 
 function resetAnatomyIsolation({clearSelection=false}={}){
+  removeROICameraGuard();
   if(state.mode === 'volume'){
-    const { main, mapper } = getMainActorMapper();
+    const { main, actor, mapper } = getMainActorMapper();
     try {
-      if(typeof mapper?.setCropping === 'function') mapper.setCropping(false);
-      else if(typeof mapper?.croppingOff === 'function') mapper.croppingOff();
+      if(typeof mapper?.removeAllClippingPlanes === 'function') mapper.removeAllClippingPlanes();
+      else if(typeof mapper?.removeClippingPlane === 'function'){
+        for(const plane of state.roiClipPlanes || []) mapper.removeClippingPlane(plane);
+      }
+      mapper?.modified?.();
+      actor?.modified?.();
       main?.resetCamera?.();
       main?.render?.();
-    } catch (e) { console.warn('Could not reset ROI cropping', e); }
+    } catch (e) { console.warn('Could not reset ROI clipping', e); }
   }
+  state.roiClipPlanes = [];
   state.isolationActive = false;
+  state.isolationContext=0; if(els.roiContext){els.roiContext.value='0';els.roiContextOut.textContent='0%';}
   state.isolationBounds = null;
+  els.sliceAnatomyOverlay?.classList.add('hidden');
   els.isolateAnatomy.textContent = 'ISOLATE ROI';
   if(clearSelection){
     state.selectedAnatomy = null;
@@ -1376,6 +1911,7 @@ function applyWorkspaceLayout(){
   els.swapViews.title = state.slicePrimary ? 'Restore 3D as main view' : 'Make slice the main view';
   els.minimizeSlice.textContent = state.sliceMinimized ? '□' : '—';
   els.minimizeSlice.title = state.sliceMinimized ? 'Restore slice' : 'Minimize slice';
+  if(!state.slicePrimary && !state.sliceMinimized) applySliceDockPosition();
   requestAnimationFrame(() => {
     try { state.engine?.resize(true, false); } catch (_) {}
     try {
@@ -1385,6 +1921,44 @@ function applyWorkspaceLayout(){
     resizeOverlay();
     drawWorldOverlay();
   });
+}
+
+function applySliceDockPosition(){
+  if(!state.sliceDockPos || state.slicePrimary || state.sliceMinimized) return;
+  const wr = els.workspace.getBoundingClientRect();
+  const dr = els.sliceDock.getBoundingClientRect();
+  const x = clamp(state.sliceDockPos.x, 8, Math.max(8, wr.width-dr.width-8));
+  const y = clamp(state.sliceDockPos.y, 8, Math.max(8, wr.height-dr.height-8));
+  state.sliceDockPos = {x,y};
+  els.sliceDock.style.left = `${x}px`;
+  els.sliceDock.style.top = `${y}px`;
+  els.sliceDock.style.right = 'auto';
+  els.sliceDock.style.bottom = 'auto';
+}
+
+function installSliceDockDrag(){
+  const header = els.sliceDock?.querySelector('header');
+  if(!header) return;
+  header.addEventListener('pointerdown', (e) => {
+    if(state.mode !== 'volume' || state.slicePrimary || state.sliceMinimized || e.button !== 0 || e.target.closest('button')) return;
+    const wr=els.workspace.getBoundingClientRect(), dr=els.sliceDock.getBoundingClientRect();
+    state.sliceDrag={pointerId:e.pointerId, dx:e.clientX-dr.left, dy:e.clientY-dr.top, workspaceLeft:wr.left, workspaceTop:wr.top};
+    state.sliceDockPos={x:dr.left-wr.left,y:dr.top-wr.top};
+    els.sliceDock.classList.add('dragging');
+    try { header.setPointerCapture(e.pointerId); } catch (_) {}
+    e.preventDefault();
+  });
+  header.addEventListener('pointermove', (e) => {
+    if(!state.sliceDrag || state.sliceDrag.pointerId !== e.pointerId) return;
+    state.sliceDockPos={x:e.clientX-state.sliceDrag.workspaceLeft-state.sliceDrag.dx,y:e.clientY-state.sliceDrag.workspaceTop-state.sliceDrag.dy};
+    applySliceDockPosition();
+  });
+  const end=(e)=>{
+    if(!state.sliceDrag || (e?.pointerId!=null && state.sliceDrag.pointerId!==e.pointerId)) return;
+    state.sliceDrag=null; els.sliceDock.classList.remove('dragging');
+    requestAnimationFrame(()=>{try{state.engine?.resize(true,false);}catch(_){ } drawSliceAnatomyOverlay();});
+  };
+  header.addEventListener('pointerup',end); header.addEventListener('pointercancel',end);
 }
 
 function toggleSliceMinimize(){
@@ -1398,6 +1972,7 @@ function toggleViewSwap(){
   if(state.mode !== 'volume') return;
   if(state.sliceMinimized) state.sliceMinimized = false;
   state.slicePrimary = !state.slicePrimary;
+  if(state.slicePrimary){ els.sliceDock.style.left=''; els.sliceDock.style.top=''; els.sliceDock.style.right=''; els.sliceDock.style.bottom=''; }
   applyWorkspaceLayout();
 }
 
@@ -1405,7 +1980,74 @@ function resizeOverlay(){
   const r=els.volumeViewport.getBoundingClientRect(); els.worldOverlay.setAttribute('viewBox',`0 0 ${Math.max(1,r.width)} ${Math.max(1,r.height)}`);
   try { state.engine?.resize(true,true); } catch (_) {}
 }
-window.addEventListener('resize', resizeOverlay);
+window.addEventListener('resize', ()=>{ resizeOverlay(); applySliceDockPosition(); drawSliceAnatomyOverlay(); });
+
+function toggleMPRMode(){
+  if(state.mode!=='volume') return;
+  state.mprMode=!state.mprMode;
+  state.slicePrimary=false; state.sliceMinimized=false;
+  els.workspace.classList.toggle('mpr-mode',state.mprMode);
+  els.workspace.classList.remove('slice-primary','slice-minimized');
+  els.mprToggle.classList.toggle('active',state.mprMode);
+  if(state.mprMode){
+    els.sliceDock.style.left='';els.sliceDock.style.top='';els.sliceDock.style.right='';els.sliceDock.style.bottom='';
+    updateSlicePlane('axial',false);
+  }
+  requestAnimationFrame(()=>{
+    try{state.engine.resize(true,false);}catch(_){}
+    for(const id of [VIEWPORT_MAIN,VIEWPORT_SLICE,VIEWPORT_SAG,VIEWPORT_COR]){try{state.engine.getViewport(id)?.resetCamera?.();}catch(_){} }
+    if(state.mprMode) activateCrosshairs(); else if(state.activeTool==='crosshairs'){const g=getAnnotationToolGroup();try{g?.setToolPassive(CrosshairsTool?.toolName);}catch(_){}state.activeTool=null;els.measureReadout.textContent='SPATIAL IMAGE TOOLS · NO DIAGNOSTIC INTERPRETATION';}
+    try{state.engine.renderViewports([VIEWPORT_MAIN,VIEWPORT_SLICE,VIEWPORT_SAG,VIEWPORT_COR]);}catch(_){try{state.engine.render();}catch(__){}}
+    resizeOverlay(); drawWorldOverlay();
+  });
+  setNotice(state.mprMode?'4-UP MPR · synchronized axial, sagittal and coronal views share the same physical volume. Crosshairs move all three planes in patient space.':'MPR 4-up closed. The movable slice viewport remains available.');
+}
+
+async function cineStep(){
+  if(!state.cinePlaying || state.mode!=='volume') return;
+  const vp=state.engine.getViewport(VIEWPORT_SLICE), n=Math.max(1,vp?.getNumberOfSlices?.()||1); let idx=0;
+  try{const info=utilities.getVolumeViewportScrollInfo(vp,state.volumeId);idx=info.currentStepIndex??0;}catch(_){idx=vp?.getCurrentImageIdIndex?.()??0;}
+  idx=(idx+1)%n;
+  try{await utilities.jumpToSlice(els.sliceViewport,{imageIndex:idx});}catch(_){}
+  updateSliceUI();
+}
+function scheduleCine(){
+  clearInterval(state.cineTimer); state.cineTimer=0;
+  if(!state.cinePlaying) return;
+  state.cineTimer=setInterval(cineStep,Math.max(40,1000/state.cineFps));
+}
+function toggleCine(){
+  if(state.mode!=='volume') return;
+  state.cinePlaying=!state.cinePlaying; els.cineToggle.classList.toggle('active',state.cinePlaying); els.cineToggle.querySelector('b').textContent=state.cinePlaying?'Ⅱ':'▶'; scheduleCine();
+}
+function stopCine(){state.cinePlaying=false;if(state.cineTimer)clearInterval(state.cineTimer);state.cineTimer=0;els.cineToggle?.classList.remove('active');if(els.cineToggle?.querySelector('b'))els.cineToggle.querySelector('b').textContent='▶';}
+
+function snap3DOrientation(view){
+  if(state.mode!=='volume'||!state.imageGeometry) return; const vp=state.engine.getViewport(VIEWPORT_MAIN), c=state.imageGeometry.center,d=Math.max(100,state.imageGeometry.maxExtent*1.6);
+  const map={anterior:{v:[0,-1,0],up:[0,0,1]},posterior:{v:[0,1,0],up:[0,0,1]},left:{v:[1,0,0],up:[0,0,1]},right:{v:[-1,0,0],up:[0,0,1]},superior:{v:[0,0,1],up:[0,-1,0]},inferior:{v:[0,0,-1],up:[0,1,0]}};
+  const o=map[view]; if(!o)return; const pos=[c[0]+o.v[0]*d,c[1]+o.v[1]*d,c[2]+o.v[2]*d]; try{vp.setCamera({focalPoint:c,position:pos,viewUp:o.up});vp.render();}catch(e){console.warn(e);}
+}
+
+function exportCurrentPng(){
+  const element=state.slicePrimary?els.sliceViewport:els.volumeViewport; const canvas=element?.querySelector('canvas'); if(!canvas){showToast('No rendered canvas available',2200);return;}
+  try{canvas.toBlob(blob=>{if(!blob)return;downloadBlob(blob,`scanspace-${state.modality||'study'}-${Date.now()}.png`);},'image/png');}catch(e){showToast('PNG export failed',2400);}
+}
+function exportStudyData(){
+  const data={version:'1.1.1',modality:state.modality,region:state.region,series:state.seriesMeta?{seriesUID:state.seriesMeta.seriesUID,seriesDescription:state.seriesMeta.seriesDesc,studyDescription:state.seriesMeta.studyDesc}:null,geometry:state.imageGeometry?{dimensions:state.imageGeometry.dims,spacing:state.imageGeometry.spacing,origin:state.imageGeometry.origin}:null,bookmarks:state.bookmarks,annotations:annotation?.state?.getAnnotationManager?.()?.saveAnnotations?.()||null,exportedAt:new Date().toISOString()};
+  downloadBlob(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}),`scanspace-data-${Date.now()}.json`);
+}
+function downloadBlob(blob,name){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},500);}
+
+function installWorkstationShortcuts(){
+  window.addEventListener('keydown',(e)=>{
+    if(['INPUT','TEXTAREA'].includes(document.activeElement?.tagName)) return;
+    const mod=e.metaKey||e.ctrlKey;
+    if(mod&&e.key.toLowerCase()==='z'){e.preventDefault();e.shiftKey?redoAnnotation():undoAnnotation();return;}
+    if(e.key==='Escape'){const g=getAnnotationToolGroup();allInteractiveAnnotationTools().forEach(t=>{try{g?.setToolPassive(t.toolName);}catch(_){}});state.activeTool=null;clearAnnotationButtonStates();if(state.mprMode)activateCrosshairs();else els.measureReadout.textContent='SPATIAL IMAGE TOOLS · NO DIAGNOSTIC INTERPRETATION';return;}
+    const k=e.key.toLowerCase();
+    if(k==='m') setAnnotationTool('measure'); else if(k==='p') setAnnotationTool('marker'); else if(k==='h') setAdvancedTool('probe',ProbeTool,'HU / PROBE'); else if(k==='i') setAdvancedTool('identify',CircleROITool,'CIRCLE & IDENTIFY'); else if(k==='4') toggleMPRMode(); else if(k==='c') toggleCine(); else if(k==='1') updateSlicePlane('axial',true); else if(k==='2') updateSlicePlane('sagittal',true); else if(k==='3') updateSlicePlane('coronal',true); else if(k==='b'){$$('#colorMode button').find(x=>x.dataset.mode==='gray')?.click();} else if(k==='t'){$$('#colorMode button').find(x=>x.dataset.mode==='thermal')?.click();} else if(k==='s'){$$('#colorMode button').find(x=>x.dataset.mode==='skeletal')?.click();}
+  });
+}
 
 // UI events
 for(const input of [els.fileInput, els.folderInput]){
@@ -1424,8 +2066,12 @@ for(const input of [els.fileInput, els.folderInput]){
 ['dragleave','drop'].forEach(ev=>els.workspace.addEventListener(ev,e=>{e.preventDefault();els.workspace.classList.remove('drop-active');}));
 els.workspace.addEventListener('drop',e=>handleFiles([...e.dataTransfer.files]));
 
-$$('#colorMode button').forEach(btn=>btn.addEventListener('click',()=>{ $$('#colorMode button').forEach(x=>x.classList.toggle('active',x===btn));state.colorMode=btn.dataset.mode;applyVisualization(); }));
-$$('#planeMode button').forEach(btn=>btn.addEventListener('click',()=>updateSlicePlane(btn.dataset.plane,true)));
+$$('#colorMode button').forEach(btn=>btn.addEventListener('click',()=>{
+  $$('#colorMode button').forEach(x=>x.classList.toggle('active',x===btn));
+  if(btn.dataset.mode === 'skeletal') applySkeletalPreset();
+  else { state.skeletonPreset=false; state.colorMode=btn.dataset.mode; applyVisualization(); }
+}));
+$$('#planeMode button').forEach(btn=>btn.addEventListener('click',()=>{if(state.mprMode){showToast('4-UP MPR already shows axial, sagittal and coronal together',2200);return;}updateSlicePlane(btn.dataset.plane,true);}));
 
 function bindRange(el,out,fn,fmt){
   el.addEventListener('input',()=>{
@@ -1453,13 +2099,30 @@ els.splicerToggle.addEventListener('click',()=>{state.showPlane=!state.showPlane
 els.axisToggle.addEventListener('click',()=>{state.showAxes=!state.showAxes;els.axisToggle.classList.toggle('active',state.showAxes);els.axisToggle.setAttribute('aria-pressed',String(state.showAxes));drawWorldOverlay();});
 els.measureTool.addEventListener('click',()=>setAnnotationTool('measure'));
 els.markerTool.addEventListener('click',()=>setAnnotationTool('marker'));
-els.clearTools.addEventListener('click',()=>{annotation.state.removeAllAnnotations();state.engine?.render();showToast('Measurements and markers cleared');});
-els.resetView.addEventListener('click',()=>{if(!state.mode)return;const main=state.engine.getViewport(VIEWPORT_MAIN);main?.resetCamera();if(state.mode==='volume')state.engine.getViewport(VIEWPORT_SLICE)?.resetCamera();try{state.engine.renderViewports(state.mode==='volume'?[VIEWPORT_MAIN,VIEWPORT_SLICE]:[VIEWPORT_MAIN]);}catch(_){state.engine.render();}});
+els.clearTools.addEventListener('click', clearMeasurementsKeepMarkers);
+els.resetView.addEventListener('click',()=>{if(!state.mode)return;const ids=state.mode==='volume'?[VIEWPORT_MAIN,VIEWPORT_SLICE,VIEWPORT_SAG,VIEWPORT_COR]:[VIEWPORT_MAIN];for(const id of ids){try{state.engine.getViewport(id)?.resetCamera?.();}catch(_){}}try{state.engine.renderViewports(ids);}catch(_){state.engine.render();}});
 // Adaptive volume quality: coarse while the user rotates/zooms, selected
 // quality again almost immediately after interaction ends.
 els.volumeViewport.addEventListener('pointerdown',()=>setInteractiveQuality(true),{passive:true});
 window.addEventListener('pointerup',()=>{if(state.mode==='volume'){clearTimeout(state.qualityRestoreTimer);state.qualityRestoreTimer=setTimeout(()=>{state.interactiveQuality=false;applySampleQuality(false,true);},80);}}, {passive:true});
-els.volumeViewport.addEventListener('wheel',()=>setInteractiveQuality(true),{passive:true});
+els.volumeViewport.addEventListener('wheel',(e)=>{
+  if(state.mode !== 'volume') return;
+  e.preventDefault();
+  setInteractiveQuality(true);
+  const vp=state.engine?.getViewport?.(VIEWPORT_MAIN);
+  setZoomForViewport(vp, e.deltaY < 0 ? 1.12 : 1/1.12);
+},{passive:false});
+// Slice wheel remains slice-scroll. Hold Command/Control while wheeling for
+// smooth zoom so navigation and zoom never fight over the same gesture.
+els.sliceViewport.addEventListener('wheel',(e)=>{
+  if(state.mode !== 'volume' || !(e.metaKey || e.ctrlKey)) return;
+  e.preventDefault(); e.stopImmediatePropagation();
+  const vp=state.engine?.getViewport?.(VIEWPORT_SLICE);
+  setZoomForViewport(vp, e.deltaY < 0 ? 1.12 : 1/1.12);
+  drawSliceAnatomyOverlay();
+},{passive:false,capture:true});
+els.volumeViewport.addEventListener('dblclick',()=>{const vp=state.engine?.getViewport?.(VIEWPORT_MAIN);vp?.resetCamera?.();vp?.render?.();});
+els.sliceViewport.addEventListener('dblclick',()=>{const vp=state.engine?.getViewport?.(VIEWPORT_SLICE);vp?.resetCamera?.();vp?.render?.();drawSliceAnatomyOverlay();});
 els.anatomySearch.addEventListener('input', e => renderAnatomyResults(e.target.value));
 els.anatomySearch.addEventListener('keydown', e => {
   if(e.key === 'Escape'){ els.anatomyResults.classList.add('hidden'); return; }
@@ -1477,6 +2140,27 @@ els.isolateAnatomy.addEventListener('click', isolateSelectedAnatomy);
 els.resetIsolation.addEventListener('click', () => resetAnatomyIsolation());
 els.swapViews.addEventListener('click', toggleViewSwap);
 els.minimizeSlice.addEventListener('click', toggleSliceMinimize);
+els.mprToggle?.addEventListener('click',toggleMPRMode);
+els.cineToggle?.addEventListener('click',toggleCine);
+els.cineFps?.addEventListener('input',()=>{state.cineFps=+els.cineFps.value;els.cineFpsOut.textContent=`${state.cineFps} FPS`;if(state.cinePlaying)scheduleCine();});
+els.probeTool?.addEventListener('click',()=>setAdvancedTool('probe',ProbeTool,'HU / PROBE'));
+els.rectRoiTool?.addEventListener('click',()=>setAdvancedTool('rectRoi',RectangleROITool,'RECT ROI'));
+els.ellipseRoiTool?.addEventListener('click',()=>setAdvancedTool('ellipseRoi',EllipticalROITool,'ELLIPSE ROI'));
+els.identifyTool?.addEventListener('click',()=>setAdvancedTool('identify',CircleROITool,'CIRCLE & IDENTIFY'));
+els.angleTool?.addEventListener('click',()=>setAdvancedTool('angle',AngleTool,'ANGLE'));
+els.bidirTool?.addEventListener('click',()=>setAdvancedTool('bidir',BidirectionalTool,'BIDIRECTIONAL'));
+els.cobbTool?.addEventListener('click',()=>setAdvancedTool('cobb',CobbAngleTool,'COBB ANGLE'));
+els.undoTool?.addEventListener('click',undoAnnotation);
+els.redoTool?.addEventListener('click',redoAnnotation);
+els.exportPng?.addEventListener('click',exportCurrentPng);
+els.exportJson?.addEventListener('click',exportStudyData);
+els.windowPresets?.querySelectorAll('button').forEach(btn=>btn.addEventListener('click',()=>applyWindowPreset(btn.dataset.preset)));
+els.orientationCube?.querySelectorAll('button').forEach(btn=>btn.addEventListener('click',()=>snap3DOrientation(btn.dataset.view)));
+els.roiContext?.addEventListener('input',()=>updateIsolationContext(+els.roiContext.value));
+els.shadingToggle?.addEventListener('click',()=>{state.shading=!state.shading;els.shadingToggle.classList.toggle('active',state.shading);applyVisualization();});
+
+installSliceDockDrag();
+installWorkstationShortcuts();
 
 // Start the visual shell immediately. Cornerstone is initialized lazily after the
 // user selects a study so a worker/WASM problem can never block the native file picker.
