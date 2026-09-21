@@ -1,132 +1,120 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>SCAN//SPACE — Medical imaging explorer prototype</title>
-  <link rel="stylesheet" href="styles.css" />
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="dark" />
+  <title>SCAN//SPACE</title>
+  <link rel="stylesheet" href="/src/styles.css" />
 </head>
 <body>
-  <div id="app" class="app" data-theme="dark">
+  <div id="app">
     <header class="topbar">
-      <div class="brand"><span class="brand-mark">SCAN//SPACE</span><span class="prototype-tag">LOCAL PROTOTYPE</span></div>
-      <div class="study-strip">
-        <span id="studyType" class="study-type">NO STUDY</span>
-        <span class="sep">/</span>
-        <span id="studyRegion">WAITING FOR INPUT</span>
-      </div>
-      <div class="top-actions">
-        <div class="local-badge"><span class="status-dot"></span>LOCAL PROCESSING</div>
-        <button id="themeToggle" class="icon-btn" title="Toggle light/dark mode">◐</button>
-      </div>
+      <div class="brand">SCAN//SPACE <span>LOCAL MEDICAL IMAGING</span></div>
+      <div class="study-id"><b id="studyType">NO STUDY</b><i>/</i><span id="studyRegion">WAITING FOR INPUT</span></div>
+      <div class="privacy-badge"><span></span>LOCAL PROCESSING</div>
     </header>
 
     <aside class="left-panel panel">
-      <section class="terminal-box">
-        <div class="section-label">ANATOMY SEARCH <span class="tiny">REFERENCE</span></div>
-        <div class="search-line"><span>&gt;</span><input id="anatomySearch" autocomplete="off" placeholder="liver, C2, left kidney…" /></div>
-        <div id="searchHint" class="terminal-hint">Search navigates predefined anatomical reference locations. It does not detect anatomy in your scan.</div>
+      <section>
+        <div class="section-title">ANATOMY SEARCH <em>REFERENCE</em></div>
+        <label class="terminal-input"><b>&gt;</b><input id="anatomySearch" placeholder="liver, C2, left kidney…" autocomplete="off" /></label>
+        <p class="microcopy">Navigates anatomical references. It does not claim a structure was detected in the scan.</p>
       </section>
-
-      <section class="anatomy-box">
-        <div class="section-head"><span>ANATOMICAL EXPLORER</span><span id="confidenceLabel" class="tiny">NO STUDY</span></div>
-        <div id="anatomyTree" class="anatomy-tree empty-tree">
-          <div class="empty-copy">Upload a study to organize relevant anatomy.</div>
-        </div>
+      <section class="anatomy-section">
+        <div class="section-title row"><span>ANATOMICAL EXPLORER</span><em id="regionConfidence">NO STUDY</em></div>
+        <div id="anatomyTree" class="anatomy-tree empty">Upload a study to organize relevant anatomy.</div>
       </section>
-
-      <section class="meta-box">
-        <div class="section-label">STUDY METADATA</div>
-        <dl id="metadataList" class="metadata-list">
-          <div><dt>Modality</dt><dd>—</dd></div>
-          <div><dt>Series</dt><dd>—</dd></div>
-          <div><dt>Dimensions</dt><dd>—</dd></div>
-          <div><dt>Voxel</dt><dd>—</dd></div>
-        </dl>
+      <section>
+        <div class="section-title">STUDY METADATA</div>
+        <dl id="metadataList" class="metadata"></dl>
       </section>
     </aside>
 
-    <main class="workspace">
-      <canvas id="volumeCanvas" class="volume-canvas"></canvas>
+    <main id="workspace" class="workspace">
+      <canvas id="dustCanvas" class="dust-canvas"></canvas>
+      <div id="volumeViewport" class="cornerstone-viewport volume-viewport"></div>
+      <svg id="worldOverlay" class="world-overlay" aria-hidden="true">
+        <polygon id="splicePlane" class="splice-plane" points="" />
+        <g id="axisGroup">
+          <line id="axisX" class="axis x"/><text id="axisXLabel" class="axis-label x">X</text>
+          <line id="axisY" class="axis y"/><text id="axisYLabel" class="axis-label y">Y</text>
+          <line id="axisZ" class="axis z"/><text id="axisZLabel" class="axis-label z">Z</text>
+        </g>
+      </svg>
       <div class="grid-overlay"></div>
 
       <div id="emptyState" class="empty-state">
         <div class="reticle"><span></span><span></span><span></span><span></span></div>
-        <div class="empty-title">DROP MEDICAL IMAGING HERE</div>
-        <div class="empty-sub">DICOM series, individual DICOM, DICOM ZIP, PNG or JPEG</div>
+        <h1>DROP MEDICAL IMAGING HERE</h1>
+        <p>DICOM files, a DICOM folder, DICOM ZIP, PNG or JPEG</p>
         <div class="upload-actions">
-          <label class="primary-btn">SELECT FILES<input id="fileInput" type="file" multiple accept=".dcm,.dicom,.zip,image/*" hidden /></label>
-          <label class="ghost-btn">SELECT FOLDER<input id="folderInput" type="file" multiple webkitdirectory hidden /></label>
-          <button id="demoButton" class="ghost-btn">LOAD DEMO PHANTOM</button>
+          <label id="selectFiles" class="upload-button primary" for="fileInput">SELECT FILES</label>
+          <label id="selectFolder" class="upload-button" for="folderInput">SELECT FOLDER</label>
+          <input id="fileInput" type="file" multiple accept=".dcm,.dicom,.zip,image/png,image/jpeg,image/webp,application/dicom,application/zip" />
+          <input id="folderInput" type="file" webkitdirectory directory multiple />
         </div>
-        <div class="privacy-note">Your selected files are processed in this browser tab. This prototype does not upload them to a server. ZIP archives are unpacked locally when supported by the browser.</div>
+        <small>Files stay in this browser session. No medical image upload is required.</small>
       </div>
 
-      <div id="hud" class="hud hidden">
-        <div class="hud-left"><span id="hudMode">VOLUME</span><span id="hudDims">—</span></div>
-        <div class="hud-center"><span class="crosshair-dot"></span><span id="hudPosition">X 50 · Y 50 · Z 50</span></div>
-        <div class="hud-right">DRAG ROTATE · WHEEL ZOOM · SHIFT+DRAG PAN</div>
-      </div>
-
+      <div id="loading" class="loading hidden"><span></span><b id="loadingText">READING STUDY</b><small id="loadingDetail">Preparing local imaging pipeline…</small></div>
       <div id="modeNotice" class="mode-notice hidden"></div>
       <div id="toast" class="toast hidden"></div>
 
+      <div id="hud" class="hud hidden">
+        <span id="hudMode">VOLUME</span>
+        <span id="hudDims">—</span>
+        <span id="hudStatus">GPU VOLUME</span>
+      </div>
+
       <section id="sliceDock" class="slice-dock hidden">
-        <div class="slice-dock-head">
-          <span id="sliceTitle">AXIAL SLICE</span>
-          <span id="sliceIndexLabel">0 / 0</span>
-        </div>
-        <div class="slice-stage">
-          <canvas id="sliceCanvas"></canvas>
-          <canvas id="sliceOverlay"></canvas>
-          <div class="slice-crosshair"><i></i><b></b></div>
-        </div>
-        <div id="measureReadout" class="measure-readout">SPATIAL SLICE · NO DIAGNOSTIC INTERPRETATION</div>
+        <header><span id="sliceTitle">AXIAL SLICE</span><span id="sliceCounter">—</span></header>
+        <div id="sliceViewport" class="cornerstone-viewport slice-viewport"></div>
+        <footer id="toolStatus">SPATIAL SLICE · NO DIAGNOSTIC INTERPRETATION</footer>
       </section>
     </main>
 
     <aside class="right-panel panel">
-      <section class="instrument-section">
-        <div class="section-head"><span>VISUALIZATION</span><span class="tiny">INSTRUMENTS</span></div>
-        <div class="segmented" id="colorMode">
-          <button data-value="gray" class="active">B&amp;W</button><button data-value="thermal">COLORIZED</button>
+      <section>
+        <div class="section-title row"><span>VISUALIZATION</span><em>INSTRUMENTS</em></div>
+        <div id="colorMode" class="segmented three">
+          <button data-mode="gray" class="active">B&amp;W</button>
+          <button data-mode="thermal">THERMAL</button>
+          <button data-mode="real">REAL-LIFE</button>
         </div>
+        <p class="microcopy compact">REAL-LIFE is a skin/bone-style intensity map, not captured tissue color and not a diagnostic classification.</p>
         <label class="control"><span>CONTRAST <output id="contrastOut">100%</output></span><input id="contrast" type="range" min="40" max="220" value="100" /></label>
         <label class="control"><span>BRIGHTNESS <output id="brightnessOut">0</output></span><input id="brightness" type="range" min="-80" max="80" value="0" /></label>
-        <label class="control volume-only"><span>VOLUME THRESHOLD <output id="thresholdOut">38%</output></span><input id="threshold" type="range" min="5" max="90" value="38" /></label>
-        <label class="control volume-only"><span>POINT DENSITY <output id="densityOut">60%</output></span><input id="density" type="range" min="15" max="100" value="60" /></label>
+        <label class="control volume-only"><span>VOLUME THRESHOLD <output id="thresholdOut">18%</output></span><input id="threshold" type="range" min="0" max="85" value="18" /></label>
+        <label class="control volume-only"><span>SCAN DENSITY / QUALITY <output id="densityOut">100%</output></span><input id="density" type="range" min="20" max="100" value="100" /></label>
+        <label class="control volume-only"><span>VOLUME OPACITY <output id="opacityOut">90%</output></span><input id="opacity" type="range" min="10" max="100" value="90" /></label>
       </section>
 
-      <section class="instrument-section volume-only">
-        <div class="section-label">SPLICER</div>
-        <div class="segmented" id="planeMode"><button data-value="axial" class="active">AXIAL</button><button data-value="sagittal">SAG</button><button data-value="coronal">COR</button></div>
+      <section class="volume-only">
+        <div class="section-title">SPLICER</div>
+        <div id="planeMode" class="segmented three"><button data-plane="axial" class="active">AXIAL</button><button data-plane="sagittal">SAG</button><button data-plane="coronal">COR</button></div>
         <label class="control"><span>SECTION POSITION <output id="sliceOut">50%</output></span><input id="slicePosition" type="range" min="0" max="1000" value="500" /></label>
-        <div class="switch-row"><span>SHOW CUTTING PLANE</span><button id="splicerToggle" class="switch active" aria-pressed="true"><i></i></button></div>
-        <div class="switch-row"><span>SHOW XYZ AXIS</span><button id="axisToggle" class="switch active" aria-pressed="true"><i></i></button></div>
+        <div class="switch-row"><span>SHOW CUTTING PLANE</span><button id="splicerToggle" class="switch active"><i></i></button></div>
+        <div class="switch-row"><span>SHOW XYZ AXIS</span><button id="axisToggle" class="switch active"><i></i></button></div>
       </section>
 
-      <section class="instrument-section">
-        <div class="section-label">TOOLS</div>
+      <section>
+        <div class="section-title">TOOLS</div>
         <div class="tool-grid">
-          <button id="measureTool" class="tool-btn">⌁<span>MEASURE</span></button>
-          <button id="markerTool" class="tool-btn">＋<span>MARKER</span></button>
-          <button id="resetView" class="tool-btn">↺<span>RESET VIEW</span></button>
-          <button id="clearTools" class="tool-btn">×<span>CLEAR</span></button>
+          <button id="measureTool" class="tool"><b>⌁</b><span>MEASURE</span></button>
+          <button id="markerTool" class="tool"><b>＋</b><span>MARKER</span></button>
+          <button id="resetView" class="tool"><b>↺</b><span>RESET VIEW</span></button>
+          <button id="clearTools" class="tool"><b>×</b><span>CLEAR</span></button>
         </div>
       </section>
 
-      <section class="instrument-section safety-box">
-        <div class="section-label">MEDICAL SAFETY</div>
-        <p>This tool visualizes imaging data and anatomical references. It does not diagnose, identify disease, or replace a radiologist or physician.</p>
-        <div class="safety-status"><span></span>INTERPRETATION DISABLED</div>
-      </section>
-
-      <section class="instrument-section support-box">
-        <div class="section-label">PROTOTYPE FORMAT SUPPORT</div>
-        <p>Uncompressed 8/16-bit grayscale DICOM (Implicit/Explicit VR Little Endian), plus browser-readable PNG/JPEG. Individual .dcm files can be reconstructed into a volume, and ZIP archives containing DICOM can be unpacked locally when the browser supports ZIP decompression APIs. Compressed DICOM transfer syntaxes are still intentionally rejected in this zero-dependency prototype.</p>
+      <section class="safety">
+        <div class="section-title">MEDICAL SAFETY</div>
+        <p>This application visualizes imaging data and anatomical references. It does not diagnose, classify pathology, or replace a radiologist or physician.</p>
+        <div><span></span>INTERPRETATION DISABLED</div>
       </section>
     </aside>
   </div>
-  <script src="app.js"></script>
+  <script type="module" src="/src/main.js"></script>
 </body>
 </html>
