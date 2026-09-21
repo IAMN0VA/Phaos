@@ -1,3 +1,5 @@
+import { ANATOMY_CATALOG, anatomyMatchesRegion, REGION_LABELS } from './anatomyCatalog.js';
+
 let coreInit, RenderingEngine, Enums, volumeLoader, imageLoader, metaData, addVolumesToViewports, setVolumesForViewports, utilities, cache, eventTarget;
 let dicomLoaderInit, wadouri;
 let toolsInit, addTool, ToolGroupManager, csToolsEnums, LengthTool, ArrowAnnotateTool, PanTool, ZoomTool, StackScrollTool, TrackballRotateTool, annotation;
@@ -226,95 +228,6 @@ const state = {
   identifyMatches: [],
   identifyCenterWorld: null,
 };
-
-const ANATOMY_CATALOG = [
-  // Brain / cranial
-  {name:'Brain',group:'CRANIAL',regions:['BRAIN','SKULL'],aliases:['cerebrum','intracranial'],center:[.50,.49,.53],size:[.64,.70,.68]},
-  {name:'Frontal lobe',group:'BRAIN LOBES',regions:['BRAIN'],aliases:['frontal cortex'],center:[.50,.34,.63],size:[.52,.34,.40]},
-  {name:'Parietal lobe',group:'BRAIN LOBES',regions:['BRAIN'],aliases:['parietal cortex'],center:[.50,.43,.76],size:[.54,.34,.32]},
-  {name:'Temporal lobes',group:'BRAIN LOBES',regions:['BRAIN'],aliases:['temporal lobe'],center:[.50,.58,.50],size:[.74,.32,.34]},
-  {name:'Occipital lobe',group:'BRAIN LOBES',regions:['BRAIN'],aliases:['occipital cortex'],center:[.50,.69,.55],size:[.48,.26,.34]},
-  {name:'Ventricles',group:'CRANIAL',regions:['BRAIN'],aliases:['lateral ventricles','ventricular system'],center:[.50,.48,.53],size:[.24,.25,.24]},
-  {name:'Cerebellum',group:'CRANIAL',regions:['BRAIN','SKULL'],aliases:['posterior fossa'],center:[.50,.70,.30],size:[.44,.30,.28]},
-  {name:'Brainstem',group:'CRANIAL',regions:['BRAIN','SKULL'],aliases:['brain stem','pons','medulla'],center:[.50,.61,.35],size:[.20,.28,.32]},
-  {name:'Pituitary region',group:'CRANIAL',regions:['BRAIN','SKULL'],aliases:['pituitary','sella','sella turcica'],center:[.50,.54,.49],size:[.16,.15,.14]},
-  {name:'Circle of Willis',group:'VASCULAR',regions:['BRAIN'],aliases:['willis circle','intracranial arteries'],center:[.50,.53,.46],size:[.26,.22,.16]},
-  {name:'Skull',group:'CRANIAL',regions:['BRAIN','SKULL'],aliases:['calvarium','cranium'],center:[.50,.50,.52],size:[.94,.94,.94]},
-  {name:'Orbits',group:'FACIAL',regions:['SKULL','BRAIN'],aliases:['eye sockets','orbit'],center:[.50,.35,.55],size:[.55,.24,.22]},
-  {name:'Sinuses',group:'FACIAL',regions:['SKULL','BRAIN'],aliases:['paranasal sinuses','frontal sinus','maxillary sinus'],center:[.50,.39,.45],size:[.54,.32,.34]},
-  {name:'Nasal cavity',group:'FACIAL',regions:['SKULL'],aliases:['nose cavity'],center:[.50,.43,.38],size:[.22,.26,.30]},
-  {name:'Mandible',group:'DENTAL',regions:['SKULL'],aliases:['lower jaw','jawbone'],center:[.50,.64,.23],size:[.66,.31,.26]},
-  {name:'Maxilla',group:'DENTAL',regions:['SKULL'],aliases:['upper jaw'],center:[.50,.48,.39],size:[.58,.28,.22]},
-  {name:'Teeth',group:'DENTAL',regions:['SKULL'],aliases:['dentition','tooth'],center:[.50,.58,.32],size:[.62,.25,.20]},
-
-  // Cervical neck
-  {name:'C1',group:'CERVICAL SPINE',regions:['NECK','SKULL'],aliases:['atlas','c1 vertebra'],center:[.50,.51,.84],size:[.30,.25,.12]},
-  {name:'C2',group:'CERVICAL SPINE',regions:['NECK','SKULL'],aliases:['axis','c2 vertebra'],center:[.50,.51,.75],size:[.30,.25,.12]},
-  {name:'C3',group:'CERVICAL SPINE',regions:['NECK'],aliases:['c3 vertebra'],center:[.50,.51,.65],size:[.30,.25,.12]},
-  {name:'C4',group:'CERVICAL SPINE',regions:['NECK'],aliases:['c4 vertebra'],center:[.50,.51,.55],size:[.30,.25,.12]},
-  {name:'C5',group:'CERVICAL SPINE',regions:['NECK'],aliases:['c5 vertebra'],center:[.50,.51,.45],size:[.30,.25,.12]},
-  {name:'C6',group:'CERVICAL SPINE',regions:['NECK'],aliases:['c6 vertebra'],center:[.50,.51,.35],size:[.30,.25,.12]},
-  {name:'C7',group:'CERVICAL SPINE',regions:['NECK'],aliases:['c7 vertebra','vertebra prominens'],center:[.50,.51,.24],size:[.32,.27,.13]},
-  {name:'Cervical spinal canal',group:'CERVICAL SPINE',regions:['NECK'],aliases:['spinal canal','cervical canal'],center:[.50,.53,.51],size:[.18,.20,.72]},
-  {name:'Thyroid',group:'SOFT TISSUE',regions:['NECK'],aliases:['thyroid gland'],center:[.50,.52,.37],size:[.42,.24,.24]},
-  {name:'Trachea',group:'AIRWAY',regions:['NECK','CHEST'],aliases:['windpipe','airway'],center:[.50,.46,.52],size:[.18,.18,.70]},
-  {name:'Esophagus',group:'SOFT TISSUE',regions:['NECK','CHEST'],aliases:['oesophagus'],center:[.50,.56,.50],size:[.16,.16,.68]},
-  {name:'Carotid arteries',group:'VASCULAR',regions:['NECK'],aliases:['carotids','common carotid','internal carotid'],center:[.50,.49,.52],size:[.56,.26,.76]},
-  {name:'Jugular veins',group:'VASCULAR',regions:['NECK'],aliases:['jugulars','internal jugular vein'],center:[.50,.48,.52],size:[.66,.28,.76]},
-
-  // Chest / thorax
-  {name:'Lungs',group:'THORACIC',regions:['CHEST'],aliases:['lung','pulmonary'],center:[.50,.46,.55],size:[.90,.68,.78]},
-  {name:'Right lung',group:'THORACIC',regions:['CHEST'],aliases:['right pulmonary'],center:[.66,.45,.55],size:[.40,.64,.76]},
-  {name:'Left lung',group:'THORACIC',regions:['CHEST'],aliases:['left pulmonary'],center:[.34,.45,.55],size:[.40,.64,.76]},
-  {name:'Heart',group:'THORACIC',regions:['CHEST'],aliases:['cardiac','myocardium'],center:[.47,.58,.44],size:[.46,.42,.42]},
-  {name:'Aorta',group:'VASCULAR',regions:['CHEST','ABDOMEN'],aliases:['aortic arch','descending aorta','abdominal aorta'],center:[.50,.52,.50],size:[.24,.26,.78]},
-  {name:'Pulmonary arteries',group:'VASCULAR',regions:['CHEST'],aliases:['pulmonary artery','pulmonary vessels'],center:[.50,.50,.50],size:[.52,.32,.30]},
-  {name:'Superior vena cava',group:'VASCULAR',regions:['CHEST'],aliases:['svc'],center:[.42,.47,.66],size:[.18,.18,.34]},
-  {name:'Inferior vena cava',group:'VASCULAR',regions:['CHEST','ABDOMEN'],aliases:['ivc'],center:[.43,.52,.45],size:[.18,.18,.72]},
-  {name:'Sternum',group:'SKELETAL',regions:['CHEST'],aliases:['breastbone'],center:[.50,.25,.50],size:[.22,.16,.72]},
-  {name:'Ribs',group:'SKELETAL',regions:['CHEST'],aliases:['rib cage','costal'],center:[.50,.47,.53],size:[.96,.82,.82]},
-  {name:'Thoracic spine',group:'SKELETAL',regions:['CHEST'],aliases:['t spine','thoracic vertebrae'],center:[.50,.73,.50],size:[.26,.22,.84]},
-  {name:'LAD coronary artery',group:'CORONARY',regions:['CHEST'],aliases:['lad','left anterior descending','anterior interventricular artery'],center:[.48,.55,.47],size:[.22,.22,.28]},
-
-  // Abdomen
-  {name:'Liver',group:'ABDOMINAL',regions:['ABDOMEN'],aliases:['hepatic','hepatic parenchyma'],center:[.68,.46,.60],size:[.52,.48,.48]},
-  {name:'Spleen',group:'ABDOMINAL',regions:['ABDOMEN'],aliases:['splenic'],center:[.25,.43,.60],size:[.28,.28,.36]},
-  {name:'Stomach',group:'ABDOMINAL',regions:['ABDOMEN'],aliases:['gastric'],center:[.42,.47,.58],size:[.36,.34,.32]},
-  {name:'Pancreas',group:'ABDOMINAL',regions:['ABDOMEN'],aliases:['pancreatic'],center:[.47,.52,.51],size:[.46,.20,.18]},
-  {name:'Gallbladder',group:'ABDOMINAL',regions:['ABDOMEN'],aliases:['gall bladder','biliary'],center:[.62,.52,.54],size:[.18,.18,.20]},
-  {name:'Small intestine',group:'BOWEL',regions:['ABDOMEN'],aliases:['small bowel','jejunum','ileum'],center:[.50,.60,.39],size:[.64,.58,.52]},
-  {name:'Colon',group:'BOWEL',regions:['ABDOMEN','PELVIS'],aliases:['large bowel','large intestine'],center:[.50,.58,.42],size:[.80,.62,.62]},
-  {name:'Appendix',group:'BOWEL',regions:['ABDOMEN','PELVIS'],aliases:['vermiform appendix'],center:[.68,.68,.24],size:[.22,.22,.24]},
-  {name:'Right kidney',group:'URINARY',regions:['ABDOMEN'],aliases:['right renal','kidney right'],center:[.69,.54,.47],size:[.28,.26,.36]},
-  {name:'Left kidney',group:'URINARY',regions:['ABDOMEN'],aliases:['left renal','kidney left'],center:[.29,.52,.49],size:[.28,.26,.36]},
-  {name:'Kidneys',group:'URINARY',regions:['ABDOMEN'],aliases:['renal','both kidneys'],center:[.50,.53,.49],size:[.72,.30,.40]},
-  {name:'Adrenal glands',group:'ENDOCRINE',regions:['ABDOMEN'],aliases:['adrenals','suprarenal glands'],center:[.50,.48,.62],size:[.64,.22,.22]},
-  {name:'Abdominal aorta',group:'VASCULAR',regions:['ABDOMEN'],aliases:['aorta abdomen'],center:[.50,.50,.48],size:[.17,.18,.68]},
-  {name:'Lumbar spine',group:'SKELETAL',regions:['ABDOMEN','PELVIS'],aliases:['l spine','lumbar vertebrae'],center:[.50,.74,.46],size:[.28,.24,.70]},
-
-  // Pelvis
-  {name:'Bladder',group:'PELVIC',regions:['PELVIS','ABDOMEN'],aliases:['urinary bladder'],center:[.50,.62,.25],size:[.38,.34,.34]},
-  {name:'Rectum',group:'PELVIC',regions:['PELVIS'],aliases:['rectal'],center:[.50,.68,.32],size:[.22,.22,.42]},
-  {name:'Sacrum',group:'SKELETAL',regions:['PELVIS'],aliases:['sacral spine'],center:[.50,.71,.47],size:[.34,.26,.52]},
-  {name:'Pelvis',group:'SKELETAL',regions:['PELVIS'],aliases:['pelvic bones','bony pelvis'],center:[.50,.52,.49],size:[.94,.72,.72]},
-  {name:'Hip joints',group:'SKELETAL',regions:['PELVIS','EXTREMITY'],aliases:['hips','acetabulum','femoral heads'],center:[.50,.58,.43],size:[.92,.38,.36]},
-  {name:'Iliac vessels',group:'VASCULAR',regions:['PELVIS'],aliases:['iliac arteries','iliac veins'],center:[.50,.50,.42],size:[.68,.26,.48]},
-  {name:'Prostate region',group:'PELVIC',regions:['PELVIS'],aliases:['prostate'],center:[.50,.60,.30],size:[.28,.24,.22]},
-  {name:'Uterine region',group:'PELVIC',regions:['PELVIS'],aliases:['uterus','uterine'],center:[.50,.58,.38],size:[.34,.30,.30]},
-
-  // Extremity general
-  {name:'Bone',group:'SKELETAL',regions:['EXTREMITY'],aliases:['cortex','cortical bone'],center:[.50,.50,.50],size:[.46,.46,.88]},
-  {name:'Joint',group:'SKELETAL',regions:['EXTREMITY'],aliases:['articulation'],center:[.50,.50,.50],size:[.62,.62,.40]},
-  {name:'Muscle',group:'SOFT TISSUE',regions:['EXTREMITY'],aliases:['musculature'],center:[.50,.50,.50],size:[.86,.86,.84]},
-  {name:'Tendon',group:'SOFT TISSUE',regions:['EXTREMITY'],aliases:['tendons'],center:[.50,.50,.50],size:[.46,.46,.70]},
-
-  // Generic navigators
-  {name:'Center of study',group:'REFERENCE',regions:['UNKNOWN'],aliases:['center','middle'],center:[.50,.50,.50],size:[.40,.40,.40]},
-  {name:'Superior',group:'REFERENCE',regions:['UNKNOWN'],aliases:['top','cranial'],center:[.50,.50,.82],size:[.65,.65,.25]},
-  {name:'Inferior',group:'REFERENCE',regions:['UNKNOWN'],aliases:['bottom','caudal'],center:[.50,.50,.18],size:[.65,.65,.25]},
-  {name:'Left',group:'REFERENCE',regions:['UNKNOWN'],aliases:['left side'],center:[.25,.50,.50],size:[.36,.70,.70]},
-  {name:'Right',group:'REFERENCE',regions:['UNKNOWN'],aliases:['right side'],center:[.75,.50,.50],size:[.36,.70,.70]},
-];
 
 const anatomyByName = new Map();
 for(const item of ANATOMY_CATALOG){
@@ -1335,7 +1248,7 @@ function finishStudyUI(info){
   els.volumeViewport.classList.remove('hidden');
   els.hud.classList.remove('hidden');
   els.studyType.textContent = state.modality || info.modality || 'STUDY';
-  els.studyRegion.textContent = state.region;
+  els.studyRegion.textContent = REGION_LABELS[state.region] || state.region;
   els.confidenceLabel.textContent = state.regionConfidence;
   els.hudMode.textContent = state.mode === 'volume' ? 'VOLUME' : '2D IMAGE';
   els.hudDims.textContent = info.dimensions;
@@ -1355,7 +1268,9 @@ function updateMetadata(info){
 }
 
 function catalogForRegion(region=state.region){
-  const exact = ANATOMY_CATALOG.filter(item => item.regions.includes(region));
+  if(region === 'WHOLE_BODY') return ANATOMY_CATALOG.filter(item => !item.regions.includes('UNKNOWN'));
+  if(region === 'UNKNOWN') return ANATOMY_CATALOG.filter(item => item.regions.includes('UNKNOWN'));
+  const exact = ANATOMY_CATALOG.filter(item => anatomyMatchesRegion(item, region));
   if(exact.length) return exact;
   return ANATOMY_CATALOG.filter(item => item.regions.includes('UNKNOWN'));
 }
@@ -1392,7 +1307,7 @@ function anatomySearchMatches(query){
     else if(item.name.toLowerCase().includes(q)) score = 55;
     else if(names.some(v => v.includes(q))) score = 45;
     if(!score) continue;
-    if(item.regions.includes(state.region)) score += 20;
+    if(anatomyMatchesRegion(item, state.region)) score += 20;
     scored.push({ item, score });
   }
   return scored.sort((a,b) => b.score-a.score || a.item.name.localeCompare(b.item.name)).slice(0,14).map(x => x.item);
@@ -1410,7 +1325,7 @@ function renderAnatomyResults(query){
     els.anatomyResults.innerHTML = '<div class="anatomy-result"><span>No reference match</span><small>TRY ANOTHER TERM</small></div>';
     return;
   }
-  els.anatomyResults.innerHTML = matches.map(item => `<button class="anatomy-result" data-anatomy="${escapeHtml(item.name)}"><span>${escapeHtml(item.name)}</span><small>${escapeHtml(item.group)} · ${escapeHtml(item.regions[0])}</small></button>`).join('');
+  els.anatomyResults.innerHTML = matches.map(item => `<button class="anatomy-result" data-anatomy="${escapeHtml(item.name)}"><span>${escapeHtml(item.name)}</span><small>${escapeHtml((item.kind || 'reference').toUpperCase())} · ${escapeHtml(item.group)} · ${escapeHtml(REGION_LABELS[item.regions[0]] || item.regions[0])}</small></button>`).join('');
   $$('.anatomy-result[data-anatomy]').forEach(btn => btn.addEventListener('click', () => {
     const item = anatomyByName.get(btn.dataset.anatomy.toLowerCase());
     if(item){
@@ -1562,18 +1477,18 @@ function updateSelectionUI(item){
   els.anatomySelection.classList.remove('hidden');
   els.selectedAnatomy.textContent = item.name;
   els.selectionMode.textContent = 'REFERENCE ROI';
-  const applicable = item.regions.includes(state.region) || state.region === 'UNKNOWN';
+  const applicable = anatomyMatchesRegion(item, state.region);
   els.selectionDetail.textContent = !applicable
-    ? `This reference belongs to ${item.regions.join(' / ')} and is not mapped into the detected ${state.region} study.`
+    ? `${(item.kind || 'reference').toUpperCase()} reference · belongs to ${item.regions.map(r => REGION_LABELS[r] || r).join(' / ')} and is not mapped into the detected ${REGION_LABELS[state.region] || state.region} study.`
     : state.mode === 'volume'
-      ? 'Reference location mapped into this scan volume. Cropping isolates the ROI, not an automatically segmented organ boundary.'
-      : 'Reference anatomy selected. Exact patient-structure isolation requires volumetric data and a segmentation mask.';
+      ? `${(item.kind || 'reference').toUpperCase()} reference mapped into this scan volume. Cropping isolates the ROI, not an automatically segmented patient-specific boundary.`
+      : `${(item.kind || 'reference').toUpperCase()} reference selected. Exact patient-structure isolation requires volumetric data and a segmentation mask.`;
   $$('.anatomy-item').forEach(btn => btn.classList.toggle('active', btn.dataset.anatomy?.toLowerCase() === item.name.toLowerCase()));
 }
 
 async function selectAnatomy(item, { autoIsolate=false }={}){
   state.selectedAnatomy = item;
-  const applicable = item.regions.includes(state.region) || state.region === 'UNKNOWN';
+  const applicable = anatomyMatchesRegion(item, state.region);
   state.selectedAnatomyWorld = applicable ? normalizedPointToWorld(item.center) : null;
   updateSelectionUI(item);
   if(!applicable){
@@ -1799,16 +1714,37 @@ function resetAnatomyIsolation({clearSelection=false}={}){
 }
 
 function inferRegion(meta){
-  const t = `${meta.body || ''} ${meta.studyDesc || ''} ${meta.seriesDesc || ''}`.toUpperCase();
+  const t = `${meta.body || ''} ${meta.studyDesc || ''} ${meta.seriesDesc || ''}`.toUpperCase().replace(/[_-]+/g,' ');
   const rules = [
-    ['BRAIN',/BRAIN|HEAD.*MR|CRANI/],['SKULL',/SKULL|FACIAL|MANDIBLE|MAXILLA|DENTAL/],['NECK',/NECK|CERVICAL|C-SPINE/],
-    ['CHEST',/CHEST|THORAX|LUNG|CARDIAC/],['ABDOMEN',/ABDOM|LIVER|PANCREA|KIDNEY/],['PELVIS',/PELV|HIP/],
-    ['EXTREMITY',/KNEE|ANKLE|FOOT|HAND|WRIST|ELBOW|SHOULDER|FEMUR|TIBIA|HUMERUS/],
+    ['WHOLE_BODY', /WHOLE\s*BODY|TOTAL\s*BODY|VERTEX\s*TO\s*TOES|PET\s*CT.*WHOLE|CHEST\s*ABDOMEN\s*PELVIS|\bCAP\b/],
+    ['BREAST', /BREAST|MAMMO|MAMMOGRAPH/],
+    ['CERVICAL_SPINE', /CERVICAL\s*SPINE|C\s*SPINE|CSPINE/],
+    ['THORACIC_SPINE', /THORACIC\s*SPINE|T\s*SPINE|TSPINE/],
+    ['LUMBAR_SPINE', /LUMBAR\s*SPINE|L\s*SPINE|LSPINE/],
+    ['SHOULDER', /SHOULDER|GLENOHUMERAL|ROTATOR\s*CUFF/],
+    ['UPPER_ARM', /UPPER\s*ARM|HUMERUS|\bARM\b/],
+    ['ELBOW', /ELBOW/],
+    ['FOREARM', /FOREARM|RADIUS.*ULNA|ULNA.*RADIUS/],
+    ['WRIST', /WRIST|CARPAL/],
+    ['HAND', /HAND|FINGER|THUMB|METACARP|PHALANX/],
+    ['HIP', /\bHIP\b|ACETABUL|FEMORAL\s*HEAD/],
+    ['THIGH', /THIGH|FEMUR/],
+    ['KNEE', /KNEE|PATELLA|MENISC|ACL|PCL/],
+    ['LOWER_LEG', /LOWER\s*LEG|TIBIA|FIBULA|CALF|\bLEG\b/],
+    ['ANKLE', /ANKLE|MALLEOL|TALUS/],
+    ['FOOT', /FOOT|TOE|METATARS|CALCANEUS/],
+    ['BRAIN', /BRAIN|HEAD.*MR|CRANI/],
+    ['SKULL', /SKULL|FACIAL|MANDIBLE|MAXILLA|DENTAL|TMJ|SINUS/],
+    ['NECK', /\bNECK\b|SOFT\s*TISSUE\s*NECK|THYROID|LARYNX/],
+    ['CHEST', /CHEST|THORAX|LUNG|CARDIAC|HEART/],
+    ['ABDOMEN', /ABDOM|LIVER|PANCREA|KIDNEY|RENAL/],
+    ['PELVIS', /PELV|PROSTATE|UTER|BLADDER/],
+    ['SPINE', /SPINE|VERTEBR/],
+    ['EXTREMITY', /EXTREMITY|LIMB/],
   ];
   for(const [r,re] of rules) if(re.test(t)) return {region:r,confidence:'METADATA RULE'};
   return {region:'UNKNOWN',confidence:'UNCLASSIFIED'};
 }
-
 function returnToEmpty(){
   state.mode = null;
   els.emptyState.classList.remove('hidden');
@@ -1883,7 +1819,18 @@ async function loadWebImage(file){
   setNotice('Standalone 2D image detected. It remains 2D; measurements are uncalibrated unless pixel spacing is present in a medical format.');
   hideLoading();
 }
-function inferRegionFromFilename(name){ const t=(name||'').toUpperCase(); if(/BRAIN|HEAD|SKULL/.test(t))return'SKULL';if(/NECK|CERVICAL/.test(t))return'NECK';if(/CHEST|LUNG|THORAX/.test(t))return'CHEST';if(/ABDOM|LIVER|KIDNEY|PANCREAS/.test(t))return'ABDOMEN';if(/PELV|HIP/.test(t))return'PELVIS';if(/HAND|FOOT|KNEE|ANKLE|WRIST|ELBOW|SHOULDER/.test(t))return'EXTREMITY';return'UNKNOWN'; }
+function inferRegionFromFilename(name){
+  const t=(name||'').toUpperCase().replace(/[_-]+/g,' ');
+  const rules=[
+    ['WHOLE_BODY',/WHOLE\s*BODY|TOTAL\s*BODY|CHEST\s*ABDOMEN\s*PELVIS/],
+    ['BREAST',/BREAST|MAMMO/],['CERVICAL_SPINE',/CERVICAL\s*SPINE|C\s*SPINE|CSPINE/],['THORACIC_SPINE',/THORACIC\s*SPINE|T\s*SPINE|TSPINE/],['LUMBAR_SPINE',/LUMBAR\s*SPINE|L\s*SPINE|LSPINE/],
+    ['SHOULDER',/SHOULDER/],['UPPER_ARM',/UPPER\s*ARM|HUMERUS|\bARM\b/],['ELBOW',/ELBOW/],['FOREARM',/FOREARM/],['WRIST',/WRIST|CARPAL/],['HAND',/HAND|FINGER|THUMB/],
+    ['HIP',/\bHIP\b|ACETABUL/],['THIGH',/THIGH|FEMUR/],['KNEE',/KNEE|PATELLA/],['LOWER_LEG',/LOWER\s*LEG|TIBIA|FIBULA|CALF|\bLEG\b/],['ANKLE',/ANKLE|MALLEOL/],['FOOT',/FOOT|TOE|METATARS|CALCANEUS/],
+    ['BRAIN',/BRAIN|HEAD|CRANI/],['SKULL',/SKULL|FACIAL|MANDIBLE|MAXILLA|DENTAL|TMJ|SINUS/],['NECK',/NECK|THYROID|LARYNX/],['CHEST',/CHEST|LUNG|THORAX|CARDIAC/],['ABDOMEN',/ABDOM|LIVER|KIDNEY|PANCREAS/],['PELVIS',/PELV|PROSTATE|UTER|BLADDER/],['SPINE',/SPINE|VERTEBR/],['EXTREMITY',/EXTREMITY|LIMB/]
+  ];
+  for(const [r,re] of rules) if(re.test(t)) return r;
+  return 'UNKNOWN';
+}
 
 function initDust(){
   state.dust = Array.from({length:1600},(_,i) => {
@@ -2033,7 +1980,7 @@ function exportCurrentPng(){
   try{canvas.toBlob(blob=>{if(!blob)return;downloadBlob(blob,`scanspace-${state.modality||'study'}-${Date.now()}.png`);},'image/png');}catch(e){showToast('PNG export failed',2400);}
 }
 function exportStudyData(){
-  const data={version:'1.1.1',modality:state.modality,region:state.region,series:state.seriesMeta?{seriesUID:state.seriesMeta.seriesUID,seriesDescription:state.seriesMeta.seriesDesc,studyDescription:state.seriesMeta.studyDesc}:null,geometry:state.imageGeometry?{dimensions:state.imageGeometry.dims,spacing:state.imageGeometry.spacing,origin:state.imageGeometry.origin}:null,bookmarks:state.bookmarks,annotations:annotation?.state?.getAnnotationManager?.()?.saveAnnotations?.()||null,exportedAt:new Date().toISOString()};
+  const data={version:'1.2.0',modality:state.modality,region:state.region,series:state.seriesMeta?{seriesUID:state.seriesMeta.seriesUID,seriesDescription:state.seriesMeta.seriesDesc,studyDescription:state.seriesMeta.studyDesc}:null,geometry:state.imageGeometry?{dimensions:state.imageGeometry.dims,spacing:state.imageGeometry.spacing,origin:state.imageGeometry.origin}:null,bookmarks:state.bookmarks,annotations:annotation?.state?.getAnnotationManager?.()?.saveAnnotations?.()||null,exportedAt:new Date().toISOString()};
   downloadBlob(new Blob([JSON.stringify(data,null,2)],{type:'application/json'}),`scanspace-data-${Date.now()}.json`);
 }
 function downloadBlob(blob,name){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},500);}

@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 const root = path.resolve(new URL('..', import.meta.url).pathname);
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
@@ -28,10 +29,22 @@ for (const dep of ['@cornerstonejs/core','@cornerstonejs/dicom-image-loader','@c
 }
 if (!fs.existsSync(path.join(root,'public/_headers'))) failures.push('Missing deployment security headers');
 
+const anatomyModule = await import(pathToFileURL(path.join(root, 'src/anatomyCatalog.js')).href);
+const catalog = anatomyModule.ANATOMY_CATALOG || [];
+if (catalog.length < 350) failures.push(`Whole-body anatomy catalog too small: ${catalog.length}`);
+const requiredRegions = ['BRAIN','SKULL','NECK','CHEST','BREAST','ABDOMEN','PELVIS','CERVICAL_SPINE','THORACIC_SPINE','LUMBAR_SPINE','SHOULDER','UPPER_ARM','ELBOW','FOREARM','WRIST','HAND','HIP','THIGH','KNEE','LOWER_LEG','ANKLE','FOOT','WHOLE_BODY'];
+for (const region of requiredRegions) {
+  if (!catalog.some(item => item.regions?.includes(region))) failures.push(`Missing anatomy coverage for ${region}`);
+}
+const kindCount = kind => catalog.filter(item => item.kind === kind).length;
+if (kindCount('muscle') < 70) failures.push(`Insufficient muscle references: ${kindCount('muscle')}`);
+if (kindCount('tendon') < 25) failures.push(`Insufficient tendon references: ${kindCount('tendon')}`);
+if (kindCount('ligament') < 30) failures.push(`Insufficient ligament references: ${kindCount('ligament')}`);
+
 if (failures.length) {
   console.error('SCAN//SPACE preflight FAILED');
   for (const f of failures) console.error(' -', f);
   process.exit(1);
 }
 console.log('SCAN//SPACE static preflight PASSED');
-console.log(`Checked ${new Set(requiredIds).size} DOM bindings, production modes, dependencies, and deployment headers.`);
+console.log(`Checked ${new Set(requiredIds).size} DOM bindings, ${catalog.length} anatomy references, whole-body region coverage, production modes, dependencies, and deployment headers.`);
