@@ -451,24 +451,71 @@ async function configureVolume(imageIds, firstImage, meta){
   els.volumeViewport.classList.remove('hidden');
   els.sliceDock.classList.remove('hidden');
   $$('.volume-only').forEach(el => el.classList.remove('hidden'));
-  state.volumeId = `cornerstoneStreamingImageVolume:scanspace-${Date.now()}`;
+  // Build the volume from the already-decoded/cached local DICOM images when
+  // Cornerstone exposes that path. It avoids a second streaming-loader path
+  // and guarantees the assembled volume is backed by the same pixel data that
+  // successfully rendered in the 2D stack loader.
+  state.volumeId = `scanspace-volume-${Date.now()}`;
   setLoading('ASSEMBLING VOLUME FROM SPATIAL DICOM DATA');
-  state.volume = await volumeLoader.createAndCacheVolume(state.volumeId, { imageIds });
-  await state.volume.load();
+  if(typeof volumeLoader.createAndCacheVolumeFromImages === 'function'){
+    state.volume = await volumeLoader.createAndCacheVolumeFromImages(state.volumeId, imageIds);
+  } else {
+    state.volumeId = `cornerstoneStreamingImageVolume:${state.volumeId}`;
+    state.volume = await volumeLoader.createAndCacheVolume(state.volumeId, { imageIds });
+    const maybeLoad = state.volume?.load?.();
+    if(maybeLoad && typeof maybeLoad.then === 'function') await maybeLoad;
+  }
 
   state.engine.setViewports([
     { viewportId: VIEWPORT_MAIN, type: Enums.ViewportType.VOLUME_3D, element: els.volumeViewport, defaultOptions: { background:[0.018,0.024,0.03] } },
     { viewportId: VIEWPORT_SLICE, type: Enums.ViewportType.ORTHOGRAPHIC, element: els.sliceViewport, defaultOptions: { orientation: Enums.OrientationAxis.AXIAL, background:[0,0,0] } },
   ]);
-  await addVolumesToViewports(state.engine, [{ volumeId: state.volumeId }], [VIEWPORT_MAIN]);
-  await setVolumesForViewports(state.engine, [{ volumeId: state.volumeId }], [VIEWPORT_SLICE]);
+
+  // Make sure Cornerstone/VTK has the final DOM dimensions before creating
+  // the volume actors. A zero-sized viewport can otherwise look like a valid
+  // but completely blank 3D reconstruction.
+  try { state.engine.resize(true, false); } catch (_) {}
+
+  // Use one authoritative attachment path for both MPR and 3D. This mirrors
+  // Cornerstone's volume examples and ensures VOLUME_3D receives a real actor.
+  await setVolumesForViewports(
+    state.engine,
+    [{ volumeId: state.volumeId }],
+    [VIEWPORT_MAIN, VIEWPORT_SLICE],
+    true
+  );
 
   setupVolumeTools();
   const main = state.engine.getViewport(VIEWPORT_MAIN);
   const slice = state.engine.getViewport(VIEWPORT_SLICE);
+
+  const actorEntry = main?.getDefaultActor?.();
+  const actor = actorEntry?.actor;
+  if(!actor){
+    throw new Error('3D volume actor was not created. The DICOM slices loaded, but Cornerstone could not attach the assembled volume to the 3D viewport.');
+  }
+
+  // Use the scalar range of the ACTUAL assembled volume rather than the first
+  // image's stored range/window. Rescale slope/intercept and modality LUTs can
+  // make those ranges very different (especially CT).
+  const actorRange = getActorScalarRange(actor);
+  if(actorRange){
+    console.info('SCAN//SPACE 3D actor scalar range', actorRange, 'volumeId', state.volumeId);
+    state.scalarRange = actorRange;
+    // If the DICOM-provided VOI falls completely outside the assembled scalar
+    // range, use the true volume range as a safe visible default.
+    const voi = state.voiRange;
+    if(!voi || voi.upper <= actorRange[0] || voi.lower >= actorRange[1]){
+      state.voiRange = { lower: actorRange[0], upper: actorRange[1] };
+    }
+  }
+
   main.resetCamera();
   slice.resetCamera();
-  applyVisualization();
+  try { main.setCamera({ parallelProjection: false }); } catch (_) {}
+  applyVisualization(true);
+  main.render();
+  slice.render();
   state.engine.render();
 
   state.imageGeometry = getVolumeGeometry(state.volume, meta);
@@ -592,6 +639,25 @@ function applyStackVOI(){
   vp.render();
 }
 
+function getActorScalarRange(actor){
+  try {
+    const mapper = actor?.getMapper?.();
+    const input = mapper?.getInputData?.();
+    const scalars = input?.getPointData?.()?.getScalars?.();
+    const range = scalars?.getRange?.();
+    if(Array.isArray(range) && range.length >= 2 && Number.isFinite(range[0]) && Number.isFinite(range[1]) && range[1] > range[0]){
+      return [range[0], range[1]];
+    }
+  } catch (e) {
+    console.warn('Could not read 3D actor scalar range', e);
+  }
+  try {
+    const range = state.volume?.getScalarData?.()?.reduce ? null : null;
+    void range;
+  } catch (_) {}
+  return null;
+}
+
 function effectiveVOIRange(){
   const base = state.voiRange || { lower:state.scalarRange[0], upper:state.scalarRange[1] };
   const rawSpan = Math.max(1e-6, base.upper - base.lower);
@@ -600,15 +666,28 @@ function effectiveVOIRange(){
   return { lower:center-span/2, upper:center+span/2 };
 }
 
-function applyVisualization(){
+function applyVisualization(forceVisible=false){
   if(state.mode === 'stack'){ applyStackVOI(); return; }
   if(state.mode !== 'volume') return;
   const main = state.engine.getViewport(VIEWPORT_MAIN);
   const slice = state.engine.getViewport(VIEWPORT_SLICE);
-  const { lower, upper } = effectiveVOIRange();
+  let { lower, upper } = effectiveVOIRange();
+  // 3D rendering must be driven by the actual actor scalar range. VOI remains
+  // useful for MPR display, but a narrow or mismatched VOI can make an entire
+  // ray-cast volume transparent.
+  const actor = main?.getDefaultActor?.()?.actor;
+  const actorRange = actor ? getActorScalarRange(actor) : null;
+  if(actorRange){
+    const [amin, amax] = actorRange;
+    if(forceVisible || upper <= amin || lower >= amax || (upper-lower) < (amax-amin)*0.01){
+      lower = amin;
+      upper = amax;
+    }
+  }
   const rangeSpan = Math.max(1e-6, upper-lower);
-  const threshold = lower + rangeSpan * state.threshold;
-  const sampleDistanceMultiplier = 1.62 - state.density * 1.54; // 100% ≈ .08: intentionally very dense/high-quality ray sampling
+  const thresholdFraction = forceVisible ? Math.min(state.threshold, .08) : state.threshold;
+  const threshold = lower + rangeSpan * thresholdFraction;
+  const sampleDistanceMultiplier = Math.max(.06, 1.30 - state.density * 1.24); // 100% ≈ .06, dense GPU ray sampling
 
   try { main.setSampleDistanceMultiplier(sampleDistanceMultiplier); } catch (_) { try { main.setProperties({ sampleDistanceMultiplier }); } catch (_) {} }
   try { slice.setProperties({ voiRange:{lower,upper} }); } catch (_) {}
@@ -626,11 +705,18 @@ function applyVisualization(){
     if(ofun){
       ofun.removeAllPoints();
       if(isMain){
-        const op = clamp(state.opacity, .02, 1);
+        const op = clamp(state.opacity, .05, 1);
+        // A deliberately forgiving initial opacity curve: the first visible
+        // voxels become faintly translucent rather than jumping from 0 to 0.
+        // This guarantees a reconstruction is visible while keeping air / very
+        // low intensity data mostly transparent. The threshold control can then
+        // be raised interactively.
         ofun.addPoint(lower, 0);
         ofun.addPoint(threshold, 0);
-        ofun.addPoint(threshold + rangeSpan*.02, op*.12);
-        ofun.addPoint(lower + rangeSpan*.55, op*.48);
+        ofun.addPoint(threshold + rangeSpan*.015, op*.10);
+        ofun.addPoint(lower + rangeSpan*.28, op*.22);
+        ofun.addPoint(lower + rangeSpan*.52, op*.45);
+        ofun.addPoint(lower + rangeSpan*.76, op*.72);
         ofun.addPoint(upper, op);
       } else {
         ofun.addPoint(lower, 1);
