@@ -7,7 +7,7 @@
   <title>PHAOS — Explore · Study · Demo</title>
   <meta name="description" content="PHAOS is a privacy-first browser medical-imaging visualization platform for the public, health-science students, and non-clinical technical demonstrations. Educational visualization only." />
   <meta name="theme-color" content="#050709" />
-  <link rel="icon" type="image/png" href="/brand/phaos-mark.png" />
+  <link rel="icon" type="image/png" href="/brand/phaos-mark-dark.png" />
   <meta name="referrer" content="no-referrer" />
   <link rel="stylesheet" href="/src/styles.css" />
 </head>
@@ -16,7 +16,7 @@
   <div id="app">
     <header class="topbar">
       <div class="brand" aria-label="PHAOS Educational Imaging">
-        <img class="brand-logo" src="/brand/phaos-logo-cropped.png" alt="PHAOS" />
+        <img class="brand-logo" src="/brand/phaos-logo-dark.png" alt="PHAOS" />
         <span class="brand-tag">EDUCATIONAL IMAGING</span>
         <b id="brandName" class="visually-hidden">PHAOS</b>
       </div>
@@ -24,7 +24,7 @@
       <nav class="top-links" aria-label="Application">
         <button id="audienceButton" class="mode-badge" type="button" title="Change educational experience">EXPLORE</button>
         <button id="newStudy" type="button" title="Clear the current in-memory study">NEW STUDY</button>
-        <button id="aboutButton" type="button">ABOUT · v1.5.0</button>
+        <button id="aboutButton" type="button">ABOUT · v1.5.2</button>
       </nav>
     </header>
 
@@ -93,7 +93,6 @@
       <div class="grid-overlay"></div>
 
       <div id="emptyState" class="empty-state">
-        <div class="reticle"><span></span><span></span><span></span><span></span></div>
         <h1>DROP MEDICAL IMAGING HERE</h1>
         <p>DICOM files, a DICOM folder, DICOM ZIP, PNG or JPEG</p>
         <div class="upload-actions">
@@ -105,7 +104,7 @@
         <small>Files stay in this browser session. No medical image upload is required.</small>
       </div>
 
-      <div id="loading" class="loading hidden" role="status" aria-live="polite"><span></span><b id="loadingText">READING STUDY</b><small id="loadingDetail">Preparing local imaging pipeline…</small></div>
+      <div id="loading" class="loading hidden" role="status" aria-live="polite"><b id="loadingText">READING STUDY</b><small id="loadingDetail">Thermal particles are assembling the local scan volume…</small></div>
       <div id="modeNotice" class="mode-notice hidden" role="status" aria-live="polite"></div>
       <div id="referenceBanner" class="reference-banner hidden" role="note">ANATOMICAL REFERENCE — NOT PATIENT-SPECIFIC DETECTION OR SEGMENTATION</div>
       <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
@@ -202,7 +201,7 @@
     </aside>
   </div>
   <div id="aboutModal" class="about-modal hidden" role="dialog" aria-modal="true" aria-labelledby="aboutTitle">
-    <div class="about-card"><header><div class="about-brand"><img src="/brand/phaos-logo-cropped.png" alt="PHAOS" /><b id="aboutTitle">PHAOS 1.5.0</b></div><button id="closeAbout" type="button" aria-label="Close About dialog">×</button></header>
+    <div class="about-card"><header><div class="about-brand"><img src="/brand/phaos-logo-dark.png" alt="PHAOS" /><b id="aboutTitle">PHAOS 1.5.2</b></div><button id="closeAbout" type="button" aria-label="Close About dialog">×</button></header>
       <p><b>Build:</b> Explore · Study · Demo · <b>Cornerstone:</b> 5.8.2 · <b>VTK:</b> 36.4.1</p>
       <p>Local-first educational medical-imaging viewer for the public, health-science students, and non-clinical partner demonstrations. Medical image files are processed in this browser session. No analytics or crash-reporting service is included.</p>
       <p><b>Not for diagnosis, treatment, clinical decision-making, equipment quality-control certification, calibration, or primary clinical interpretation.</b> Anatomy matching and isolation are educational reference features and are not patient-specific detection.</p>
@@ -211,9 +210,9 @@
   </div>
   <div id="seriesChooser" class="series-chooser hidden"><div class="series-modal"><header><b>SELECT DICOM SERIES</b><span>Choose which series to explore</span></header><div id="seriesList" class="series-list"></div></div></div>
 
-  <div id="audienceModal" class="audience-modal" role="dialog" aria-modal="true" aria-labelledby="audienceTitle">
+  <div id="audienceModal" class="audience-modal hidden" role="dialog" aria-modal="true" aria-labelledby="audienceTitle">
     <div class="audience-card">
-      <header><div class="audience-branding"><img src="/brand/phaos-logo-cropped.png" alt="PHAOS" /><div><small>EDUCATIONAL MEDICAL IMAGING</small><h2 id="audienceTitle">HOW ARE YOU USING PHAOS?</h2></div></div></header>
+      <header><div class="audience-branding"><img src="/brand/phaos-logo-dark.png" alt="PHAOS" /><div><small>EDUCATIONAL MEDICAL IMAGING</small><h2 id="audienceTitle">CHOOSE EXPERIENCE</h2></div></div></header>
       <p class="audience-intro">Choose an experience. All PHAOS modes use the same imaging engine and are for visualization, education, and demonstration only — not diagnosis or clinical decision-making.</p>
       <div class="audience-grid">
         <button type="button" data-audience="explore"><b>EXPLORE</b><span>For the public</span><small>Explore your imaging visually and learn how slices, anatomy, and 3D space relate.</small></button>

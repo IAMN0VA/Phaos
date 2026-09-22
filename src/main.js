@@ -2,7 +2,7 @@ import { ANATOMY_CATALOG, anatomyMatchesRegion, REGION_LABELS } from './anatomyC
 import { distanceMm, hasCalibratedSpacing } from './measurement.js';
 
 const APP_NAME = 'PHAOS';
-const APP_VERSION = '1.5.0';
+const APP_VERSION = '1.5.2';
 const BUILD_LABEL = 'Explore · Study · Demo';
 const DEPENDENCY_VERSIONS = Object.freeze({ cornerstone:'5.8.2', vtk:'36.4.1' });
 const IS_DEV = Boolean(import.meta?.env?.DEV);
@@ -222,6 +222,17 @@ const state = {
   dustRAF: 0,
   dustT: 0,
   dust: [],
+  dustMode: 'ambient',
+  dustProgress: 0,
+  dustProgressVisual: 0,
+  dustShape: null,
+  dustTargetKey: '',
+  dustRect: null,
+  dustResizeObserver: null,
+  dustLastTs: 0,
+  dustBuckets: [],
+  dustPalette: [],
+  dustStopTimer: 0,
   overlayRAF: 0,
   loadToken: 0,
   imageGeometry: null,
@@ -301,10 +312,7 @@ function initializeAudienceExperience(){
   document.title = `${APP_NAME} — Explore · Study · Demo`;
   const saved = (()=>{try{return sessionStorage.getItem('imagingAudience');}catch(_){return null;}})();
   if(saved && ['explore','study','demo'].includes(saved)) setAudience(saved,{close:true});
-  else {
-    setAudience('explore',{close:false});
-    els.audienceModal?.classList.remove('hidden');
-  }
+  else setAudience('explore',{close:true});
 }
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const cross = (a,b) => [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
@@ -323,12 +331,66 @@ function setNotice(msg){
   els.notice.textContent = msg || '';
   els.notice.classList.toggle('hidden', !msg);
 }
+function inferDustProgress(label=''){
+  const t=String(label).toUpperCase();
+  const frameMatch=t.match(/(\d+)\s*\/\s*(\d+)/);
+  if(frameMatch){
+    const done=Number(frameMatch[1]), total=Math.max(1,Number(frameMatch[2]));
+    return clamp(.32 + (done/total)*.42,.32,.76);
+  }
+  if(t.includes('SELECTED')) return .06;
+  if(t.includes('INITIALIZING')) return .10;
+  if(t.includes('READING FILES')) return .16;
+  if(t.includes('UNPACKING')) return .22;
+  if(t.includes('PARSING')) return .30;
+  if(t.includes('DECODING')) return .38;
+  if(t.includes('ASSEMBLING VOLUME')) return .82;
+  if(t.includes('PREPARING 2D')) return .78;
+  return Math.max(state.dustProgress,.12);
+}
+function setDustShape({rows=512,cols=512,frames=96,region='UNKNOWN'}={}){
+  state.dustShape={rows:Number(rows)||512,cols:Number(cols)||512,frames:Math.max(1,Number(frames)||1),region};
+  state.dustTargetKey='';
+}
+function setDustShapeFromGeometry(g){
+  if(!g?.lengths?.length) return;
+  const [x=1,y=1,z=1]=g.lengths;
+  state.dustShape={rows:y,cols:x,frames:z,region:state.region||'UNKNOWN',physical:true};
+  state.dustTargetKey='';
+}
 function showLoading(label){
+  clearTimeout(state.dustStopTimer);
+  state.dustMode='loading';
+  state.dustProgress=Math.max(.04,inferDustProgress(label));
   els.loadingLabel.textContent = label;
   els.loading.classList.remove('hidden');
+  els.workspace.classList.add('is-loading');
+  els.workspace.classList.remove('dust-completing');
+  startDust();
 }
-function setLoading(label){ els.loadingLabel.textContent = label; }
-function hideLoading(){ els.loading.classList.add('hidden'); }
+function setLoading(label){
+  els.loadingLabel.textContent = label;
+  state.dustMode='loading';
+  state.dustProgress=Math.max(state.dustProgress,inferDustProgress(label));
+}
+function hideLoading(){
+  els.loading.classList.add('hidden');
+  els.workspace.classList.remove('is-loading');
+  if(state.mode){
+    state.dustMode='complete';
+    state.dustProgress=1;
+    els.workspace.classList.add('dust-completing');
+    clearTimeout(state.dustStopTimer);
+    state.dustStopTimer=setTimeout(()=>{
+      els.workspace.classList.remove('dust-completing');
+      stopDust();
+    },760);
+  }else{
+    state.dustMode='ambient';
+    state.dustProgress=0;
+    startDust();
+  }
+}
 
 async function initialize(){
   if(state.initialized) return;
@@ -378,6 +440,9 @@ function resetRuntime(){
   try { cache.purgeCache(); } catch (_) {}
   try { wadouri.fileManager.purge(); } catch (_) {}
   state.volumeId = null;
+  state.mode = null;
+  state.dustShape = null;
+  state.dustProgress = 0;
   state.volume = null;
   state.stackImageIds = [];
   state.imageGeometry = null;
@@ -571,10 +636,12 @@ async function loadDicomStudy(files){
   }
 
   state.stackImageIds = [...imageIds];
+  const firstMeta = series[0];
+  const earlyRegion = inferRegion(firstMeta);
+  setDustShape({ rows:firstMeta.rows, cols:firstMeta.cols, frames:imageIds.length, region:earlyRegion.region });
   setLoading(`DECODING ${imageIds.length} FRAME${imageIds.length === 1 ? '' : 'S'}`);
   const sampleImages = await preloadImages(imageIds);
   const firstImage = sampleImages.find(Boolean) || await imageLoader.loadAndCacheImage(imageIds[0]);
-  const firstMeta = series[0];
   state.seriesMeta = firstMeta;
   if(String(firstMeta.burnedInAnnotation||'').toUpperCase()==='YES') state.geometryWarnings.push('DICOM Burned In Annotation is YES. Pixel data may contain identifying text; verify before sharing any screenshot.');
   state.modality = firstMeta.modality;
@@ -726,6 +793,8 @@ async function configureVolume(imageIds, firstImage, meta){
   state.engine.render();
 
   state.imageGeometry = getVolumeGeometry(state.volume, meta);
+  setDustShapeFromGeometry(state.imageGeometry);
+  state.dustProgress = .94;
   state.measurementCalibrated = hasCalibratedSpacing(state.imageGeometry?.spacing);
   finishStudyUI({
     modality: meta.modality,
@@ -1337,7 +1406,6 @@ function formatVolumeSpacing(volume, meta){
 }
 
 function finishStudyUI(info){
-  stopDust();
   els.emptyState.classList.add('hidden');
   els.volumeViewport.classList.remove('hidden');
   els.hud.classList.remove('hidden');
@@ -1927,24 +1995,182 @@ function inferRegionFromFilename(name){
 }
 
 function initDust(){
-  state.dust = Array.from({length:1600},(_,i) => {
+  // Keep the field dense, but avoid more particles than the canvas can display smoothly.
+  const hw=Math.max(2,Number(navigator.hardwareConcurrency)||4);
+  const count=hw>=8?2200:hw>=4?1850:1450;
+  state.dust = Array.from({length:count},() => {
     const a=Math.random()*Math.PI*2,r=Math.sqrt(Math.random());
-    return {x:Math.cos(a)*r,y:Math.sin(a)*r,z:Math.random(),s:.4+Math.random()*2.2,a:.018+Math.random()*.16,p:Math.random()*Math.PI*2,v:.15+Math.random()*.7,heat:Math.random()};
+    return {
+      x:Math.cos(a)*r, y:Math.sin(a)*r, z:Math.random(),
+      s:.55+Math.random()*2.45, a:.08+Math.random()*.22,
+      p:Math.random()*Math.PI*2, v:.18+Math.random()*.82,
+      heat:Math.random(), u:Math.random()*2-1, q:Math.random()*2-1,
+      layer:Math.random(), wobble:Math.random()*2-1,
+      tx:0,ty:0
+    };
   });
+  // 24 thermal hues × 4 opacity levels. Reused every frame to avoid thousands
+  // of rgba string allocations and canvas style changes.
+  const colors=[];
+  for(let i=0;i<24;i++) colors.push(thermalRgb(i/23));
+  const alpha=[.20,.34,.50,.68];
+  state.dustPalette=[];
+  state.dustBuckets=[];
+  for(const [rr,gg,bb] of colors){
+    for(const aa of alpha){
+      state.dustPalette.push(`rgba(${rr},${gg},${bb},${aa})`);
+      state.dustBuckets.push([]);
+    }
+  }
+  state.dustTargetKey='';
+}
+function thermalRgb(v){
+  const stops=[
+    [0.00,[22,22,110]],[0.16,[22,82,255]],[0.33,[0,220,255]],[0.50,[26,238,124]],
+    [0.66,[255,232,38]],[0.82,[255,116,18]],[0.94,[255,36,18]],[1.00,[255,245,215]]
+  ];
+  const x=clamp(v,0,1);
+  for(let i=1;i<stops.length;i++){
+    if(x<=stops[i][0]){
+      const [p0,c0]=stops[i-1],[p1,c1]=stops[i],f=(x-p0)/(p1-p0||1);
+      return [
+        Math.round(c0[0]+(c1[0]-c0[0])*f),
+        Math.round(c0[1]+(c1[1]-c0[1])*f),
+        Math.round(c0[2]+(c1[2]-c0[2])*f)
+      ];
+    }
+  }
+  return stops[stops.length-1][1];
+}
+function updateDustTargets(r){
+  const cfg=state.dustShape||{rows:512,cols:512,frames:90,region:'UNKNOWN'};
+  const key=`${Math.round(r.width)}x${Math.round(r.height)}:${cfg.rows}:${cfg.cols}:${cfg.frames}:${cfg.region||''}`;
+  if(key===state.dustTargetKey) return;
+  state.dustTargetKey=key;
+  const rawW=Math.max(1,Number(cfg.cols)||512), rawH=Math.max(1,Number(cfg.rows)||512), rawD=Math.max(1,Number(cfg.frames)||90);
+  const maxDim=Math.max(rawW,rawH,rawD);
+  let w=clamp(rawW/maxDim,.34,1), h=clamp(rawH/maxDim,.34,1), d=clamp(rawD/maxDim,.16,.78);
+  const region=String(cfg.region||'').toUpperCase();
+  if(/SPINE/.test(region)){w*=.46;h=Math.max(h,.9);d*=.65;}
+  else if(/ARM|FOREARM|THIGH|LOWER_LEG/.test(region)){w*=.5;h=Math.max(h,.86);}
+  else if(/HAND|FOOT|WRIST|ANKLE/.test(region)){w*=.72;h*=.62;}
+  else if(/BRAIN|SKULL/.test(region)){w*=.82;h*=.86;d*=.75;}
+  else if(/CHEST|ABDOMEN|PELVIS|WHOLE_BODY/.test(region)){w*=.84;h*=.98;}
+  for(const p of state.dust){
+    const radial=Math.sqrt(Math.min(1,p.u*p.u+p.q*p.q));
+    const ellipse=Math.max(.12,1-radial*.13);
+    const sliceBand=(Math.round(p.layer*26)/26-.5)*d*.015*r.width;
+    p.tx=(p.u*w*.36 + (p.layer-.5)*d*.19)*r.width + sliceBand;
+    p.ty=(p.q*h*.36*ellipse - (p.layer-.5)*d*.08)*r.height;
+  }
+}
+function resizeDustCanvas(ctx,r){
+  // During loading, 1.25 DPR is visually crisp but substantially cheaper than 2x.
+  const dpr=Math.min(devicePixelRatio||1,state.dustMode==='loading'||state.dustMode==='complete'?1.25:1.5);
+  const w=Math.max(1,Math.floor(r.width*dpr)),h=Math.max(1,Math.floor(r.height*dpr));
+  if(els.dustCanvas.width!==w||els.dustCanvas.height!==h){
+    els.dustCanvas.width=w;els.dustCanvas.height=h;
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    state.dustTargetKey='';
+  }
+}
+function ensureDustSizing(ctx){
+  if(!state.dustRect){
+    const b=els.workspace.getBoundingClientRect();
+    state.dustRect={width:Math.max(1,b.width),height:Math.max(1,b.height)};
+  }
+  resizeDustCanvas(ctx,state.dustRect);
+  if(!state.dustResizeObserver && typeof ResizeObserver!=='undefined'){
+    state.dustResizeObserver=new ResizeObserver(entries=>{
+      const box=entries[0]?.contentRect;
+      if(!box) return;
+      state.dustRect={width:Math.max(1,box.width),height:Math.max(1,box.height)};
+      state.dustTargetKey='';
+      resizeDustCanvas(ctx,state.dustRect);
+    });
+    state.dustResizeObserver.observe(els.workspace);
+  }
 }
 function startDust(){
-  stopDust(); if(!state.dust.length)initDust();
-  const ctx=els.dustCanvas.getContext('2d');
-  const draw=()=>{
-    const r=els.workspace.getBoundingClientRect(),dpr=Math.min(devicePixelRatio||1,2);
-    if(els.dustCanvas.width!==Math.floor(r.width*dpr)||els.dustCanvas.height!==Math.floor(r.height*dpr)){els.dustCanvas.width=Math.floor(r.width*dpr);els.dustCanvas.height=Math.floor(r.height*dpr);ctx.setTransform(dpr,0,0,dpr,0,0);}
-    ctx.clearRect(0,0,r.width,r.height);state.dustT+=.005;const t=state.dustT,cx=r.width/2,cy=r.height/2,rx=Math.min(r.width,r.height)*.48,ry=Math.min(r.width,r.height)*.34;
-    const glow=ctx.createRadialGradient(cx,cy,0,cx,cy,Math.min(r.width,r.height)*.52);glow.addColorStop(0,'rgba(255,76,45,.06)');glow.addColorStop(.3,'rgba(45,160,255,.08)');glow.addColorStop(1,'rgba(0,0,0,0)');ctx.fillStyle=glow;ctx.fillRect(0,0,r.width,r.height);
-    for(const p of state.dust){const driftX=Math.sin(t*(.7+p.v)+p.p)*34+Math.cos(t*.23+p.p)*15,driftY=Math.cos(t*(.55+p.v*.6)+p.p*1.3)*25+Math.sin(t*.18+p.p)*11;const x=cx+p.x*rx+driftX,y=cy+p.y*ry+driftY;const z=.35+.65*(.5+.5*Math.sin(t*.9+p.p*2));const alpha=p.a*z,sz=p.s*(.7+z);if(p.heat>.84){ctx.fillStyle=p.heat>.94?`rgba(255,84,38,${alpha})`:`rgba(40,155,255,${alpha})`;}else{const q=Math.round(135+90*z);ctx.fillStyle=`rgba(${q},${Math.min(255,q+11)},${Math.min(255,q+20)},${alpha})`;}ctx.fillRect(x,y,sz,sz);}
+  if(!state.dust.length)initDust();
+  if(state.dustRAF) return;
+  const ctx=els.dustCanvas.getContext('2d',{alpha:true,desynchronized:true});
+  ensureDustSizing(ctx);
+  state.dustLastTs=0;
+  const draw=(ts)=>{
+    const r=state.dustRect||{width:els.workspace.clientWidth||1,height:els.workspace.clientHeight||1};
+    const dt=state.dustLastTs?clamp((ts-state.dustLastTs)/1000,.001,.05):1/60;
+    state.dustLastTs=ts;
+    const loading=state.dustMode==='loading'||state.dustMode==='complete';
+    // Time-based clock = same speed at 60/90/120Hz and after occasional slow frames.
+    state.dustT+=dt*(loading?.64:.30);
+    const t=state.dustT,cx=r.width/2,cy=r.height/2;
+    const targetProgress=loading?clamp(state.dustProgress,0,1):0;
+    const ease=1-Math.exp(-dt*(state.dustMode==='complete'?8.5:4.4));
+    state.dustProgressVisual+=(targetProgress-state.dustProgressVisual)*ease;
+    if(!loading && state.dustProgressVisual<.001) state.dustProgressVisual=0;
+    const progress=clamp(state.dustProgressVisual,0,1);
+    const form=loading?1-Math.pow(1-progress,2.15):0;
+    const orbitStrength=loading?(1-form)*(.16+.18*(1-progress)):.12;
+    const ambientBase=Math.min(r.width,r.height);
+    const ambientRx=ambientBase*.50,ambientRy=ambientBase*.36;
+    updateDustTargets(r);
+    ctx.clearRect(0,0,r.width,r.height);
+
+    // Gradient is only one draw call and now follows eased progress rather than jumping.
+    const glow=ctx.createRadialGradient(cx,cy,0,cx,cy,ambientBase*.56);
+    if(loading){
+      glow.addColorStop(0,`rgba(255,66,24,${.10+.09*progress})`);
+      glow.addColorStop(.28,`rgba(255,204,30,${.055+.06*progress})`);
+      glow.addColorStop(.55,'rgba(0,205,255,.055)');
+      glow.addColorStop(1,'rgba(0,0,0,0)');
+    }else{
+      glow.addColorStop(0,'rgba(255,76,45,.07)');
+      glow.addColorStop(.36,'rgba(0,185,255,.07)');
+      glow.addColorStop(1,'rgba(0,0,0,0)');
+    }
+    ctx.fillStyle=glow;ctx.fillRect(0,0,r.width,r.height);
+
+    for(const bucket of state.dustBuckets) bucket.length=0;
+    for(const p of state.dust){
+      const ambientX=p.x*ambientRx + Math.sin(t*(.7+p.v)+p.p)*36 + Math.cos(t*.23+p.p)*16;
+      const ambientY=p.y*ambientRy + Math.cos(t*(.55+p.v*.6)+p.p*1.3)*28 + Math.sin(t*.18+p.p)*12;
+      let x=ambientX,y=ambientY;
+      if(loading){
+        const orbit=(ambientBase*orbitStrength)*(0.18+p.z*.38);
+        const ox=Math.cos(t*(1.1+p.v)+p.p)*orbit;
+        const oy=Math.sin(t*(.92+p.v*.7)+p.p*1.4)*orbit*.58;
+        x=ambientX*(1-form)+(p.tx+ox)*form;
+        y=ambientY*(1-form)+(p.ty+oy)*form;
+      }
+      x+=cx;y+=cy;
+      const pulse=.45+.55*(.5+.5*Math.sin(t*(1.1+p.v)+p.p*2));
+      const heatBase=loading?clamp(.16+p.heat*.56+progress*.42,0,1):clamp(.10+p.heat*.72,0,1);
+      const heat=state.dustMode==='complete'?clamp(.58+p.heat*.42,0,1):clamp(heatBase+.05*Math.sin(t+p.p),0,1);
+      const heatBin=Math.min(23,Math.max(0,Math.round(heat*23)));
+      const alphaRaw=Math.min(.72,p.a*(loading?1.55:1.0)*(.72+pulse*.72));
+      const alphaBin=alphaRaw>.56?3:alphaRaw>.40?2:alphaRaw>.27?1:0;
+      const size=p.s*(loading?(1.02+form*.45):(.72+pulse*.72));
+      state.dustBuckets[heatBin*4+alphaBin].push(x,y,size);
+    }
+    // Draw by style bucket: ~96 style changes max instead of one per particle.
+    for(let i=0;i<state.dustBuckets.length;i++){
+      const bucket=state.dustBuckets[i];
+      if(!bucket.length) continue;
+      ctx.fillStyle=state.dustPalette[i];
+      for(let j=0;j<bucket.length;j+=3) ctx.fillRect(bucket[j],bucket[j+1],bucket[j+2],bucket[j+2]);
+    }
     state.dustRAF=requestAnimationFrame(draw);
-  };draw();
+  };
+  state.dustRAF=requestAnimationFrame(draw);
 }
-function stopDust(){ if(state.dustRAF)cancelAnimationFrame(state.dustRAF);state.dustRAF=0;const c=els.dustCanvas.getContext('2d');c.clearRect(0,0,els.dustCanvas.width,els.dustCanvas.height); }
+function stopDust(){
+  if(state.dustRAF)cancelAnimationFrame(state.dustRAF);
+  state.dustRAF=0;
+  state.dustLastTs=0;
+  const c=els.dustCanvas.getContext('2d');
+  c.clearRect(0,0,els.dustCanvas.width,els.dustCanvas.height);
+}
 
 function applyWorkspaceLayout(){
   els.workspace.classList.toggle('slice-primary', state.slicePrimary);

@@ -23,7 +23,7 @@ if (!js.includes('installSliceDockDrag')) failures.push('Movable slice dock beha
 if (!js.includes('clearMeasurementsKeepMarkers')) failures.push('Session marker persistence behavior missing');
 if (/point cloud|point density/i.test(html + js)) failures.push('Legacy point-cloud terminology is still present');
 if (!css.includes('Work Sans')) failures.push('Work Sans typography is not configured');
-if (!html.includes('phaos-logo-cropped.png') || !js.includes("const APP_NAME = 'PHAOS'")) failures.push('PHAOS branding is incomplete');
+if (!html.includes('phaos-logo-dark.png') || !js.includes("const APP_NAME = 'PHAOS'")) failures.push('PHAOS branding is incomplete');
 if (!js.includes('CircleROITool') || !js.includes('identifyAnatomyAtWorld')) failures.push('Circle & Identify implementation missing');
 for (const dep of ['@cornerstonejs/core','@cornerstonejs/dicom-image-loader','@cornerstonejs/tools','dicom-parser','fflate']) {
   if (!pkg.dependencies?.[dep]) failures.push(`Missing dependency ${dep}`);
