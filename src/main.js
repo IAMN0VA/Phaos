@@ -232,6 +232,8 @@ const state = {
   dustLastTs: 0,
   dustBuckets: [],
   dustPalette: [],
+  dustGlowAmbient: null,
+  dustGlowLoading: null,
   dustStopTimer: 0,
   overlayRAF: 0,
   loadToken: 0,
@@ -1997,7 +1999,7 @@ function inferRegionFromFilename(name){
 function initDust(){
   // Keep the field dense, but avoid more particles than the canvas can display smoothly.
   const hw=Math.max(2,Number(navigator.hardwareConcurrency)||4);
-  const count=hw>=8?2200:hw>=4?1850:1450;
+  const count=hw>=8?1800:hw>=4?1450:1050;
   state.dust = Array.from({length:count},() => {
     const a=Math.random()*Math.PI*2,r=Math.sqrt(Math.random());
     return {
@@ -2064,14 +2066,32 @@ function updateDustTargets(r){
     p.ty=(p.q*h*.36*ellipse - (p.layer-.5)*d*.08)*r.height;
   }
 }
+function rebuildDustGlows(ctx,r){
+  const cx=r.width/2,cy=r.height/2,rad=Math.min(r.width,r.height)*.56;
+  const ambient=ctx.createRadialGradient(cx,cy,0,cx,cy,rad);
+  ambient.addColorStop(0,'rgba(255,76,45,.07)');
+  ambient.addColorStop(.36,'rgba(0,185,255,.07)');
+  ambient.addColorStop(1,'rgba(0,0,0,0)');
+  const loading=ctx.createRadialGradient(cx,cy,0,cx,cy,rad);
+  loading.addColorStop(0,'rgba(255,66,24,.18)');
+  loading.addColorStop(.28,'rgba(255,204,30,.105)');
+  loading.addColorStop(.55,'rgba(0,205,255,.065)');
+  loading.addColorStop(1,'rgba(0,0,0,0)');
+  state.dustGlowAmbient=ambient;
+  state.dustGlowLoading=loading;
+}
 function resizeDustCanvas(ctx,r){
-  // During loading, 1.25 DPR is visually crisp but substantially cheaper than 2x.
-  const dpr=Math.min(devicePixelRatio||1,state.dustMode==='loading'||state.dustMode==='complete'?1.25:1.5);
+  // Keep the particle canvas intentionally below full Retina resolution. The
+  // circles remain visually soft while the browser has far fewer pixels to clear/fill.
+  const dpr=Math.min(devicePixelRatio||1,state.dustMode==='loading'||state.dustMode==='complete'?1.15:1.35);
   const w=Math.max(1,Math.floor(r.width*dpr)),h=Math.max(1,Math.floor(r.height*dpr));
   if(els.dustCanvas.width!==w||els.dustCanvas.height!==h){
     els.dustCanvas.width=w;els.dustCanvas.height=h;
     ctx.setTransform(dpr,0,0,dpr,0,0);
     state.dustTargetKey='';
+    rebuildDustGlows(ctx,r);
+  } else if(!state.dustGlowAmbient||!state.dustGlowLoading){
+    rebuildDustGlows(ctx,r);
   }
 }
 function ensureDustSizing(ctx){
@@ -2117,48 +2137,52 @@ function startDust(){
     updateDustTargets(r);
     ctx.clearRect(0,0,r.width,r.height);
 
-    // Gradient is only one draw call and now follows eased progress rather than jumping.
-    const glow=ctx.createRadialGradient(cx,cy,0,cx,cy,ambientBase*.56);
-    if(loading){
-      glow.addColorStop(0,`rgba(255,66,24,${.10+.09*progress})`);
-      glow.addColorStop(.28,`rgba(255,204,30,${.055+.06*progress})`);
-      glow.addColorStop(.55,'rgba(0,205,255,.055)');
-      glow.addColorStop(1,'rgba(0,0,0,0)');
-    }else{
-      glow.addColorStop(0,'rgba(255,76,45,.07)');
-      glow.addColorStop(.36,'rgba(0,185,255,.07)');
-      glow.addColorStop(1,'rgba(0,0,0,0)');
-    }
-    ctx.fillStyle=glow;ctx.fillRect(0,0,r.width,r.height);
+    // Cached radial gradients avoid rebuilding CanvasGradient objects every frame.
+    ctx.save();
+    ctx.globalAlpha=loading?(.62+.38*progress):1;
+    ctx.fillStyle=loading?state.dustGlowLoading:state.dustGlowAmbient;
+    ctx.fillRect(0,0,r.width,r.height);
+    ctx.restore();
 
     for(const bucket of state.dustBuckets) bucket.length=0;
     for(const p of state.dust){
-      const ambientX=p.x*ambientRx + Math.sin(t*(.7+p.v)+p.p)*36 + Math.cos(t*.23+p.p)*16;
-      const ambientY=p.y*ambientRy + Math.cos(t*(.55+p.v*.6)+p.p*1.3)*28 + Math.sin(t*.18+p.p)*12;
+      // One sin/cos pair drives drift, orbit, pulse and heat shimmer. This keeps
+      // motion organic without doing 6-8 transcendental operations per particle.
+      const phase=t*(.68+p.v*.44)+p.p;
+      const sn=Math.sin(phase),cs=Math.cos(phase);
+      const ambientX=p.x*ambientRx + sn*(30+12*p.z);
+      const ambientY=p.y*ambientRy + cs*(22+10*p.layer);
       let x=ambientX,y=ambientY;
       if(loading){
         const orbit=(ambientBase*orbitStrength)*(0.18+p.z*.38);
-        const ox=Math.cos(t*(1.1+p.v)+p.p)*orbit;
-        const oy=Math.sin(t*(.92+p.v*.7)+p.p*1.4)*orbit*.58;
+        const ox=cs*orbit;
+        const oy=sn*orbit*.58;
         x=ambientX*(1-form)+(p.tx+ox)*form;
         y=ambientY*(1-form)+(p.ty+oy)*form;
       }
       x+=cx;y+=cy;
-      const pulse=.45+.55*(.5+.5*Math.sin(t*(1.1+p.v)+p.p*2));
+      const pulse=.725+.275*sn;
       const heatBase=loading?clamp(.16+p.heat*.56+progress*.42,0,1):clamp(.10+p.heat*.72,0,1);
-      const heat=state.dustMode==='complete'?clamp(.58+p.heat*.42,0,1):clamp(heatBase+.05*Math.sin(t+p.p),0,1);
+      const heat=state.dustMode==='complete'?clamp(.58+p.heat*.42,0,1):clamp(heatBase+.045*sn,0,1);
       const heatBin=Math.min(23,Math.max(0,Math.round(heat*23)));
       const alphaRaw=Math.min(.72,p.a*(loading?1.55:1.0)*(.72+pulse*.72));
       const alphaBin=alphaRaw>.56?3:alphaRaw>.40?2:alphaRaw>.27?1:0;
-      const size=p.s*(loading?(1.02+form*.45):(.72+pulse*.72));
-      state.dustBuckets[heatBin*4+alphaBin].push(x,y,size);
+      const radius=Math.max(.42,p.s*(loading?(1.02+form*.45):(.72+pulse*.72))*.52);
+      state.dustBuckets[heatBin*4+alphaBin].push(x,y,radius);
     }
-    // Draw by style bucket: ~96 style changes max instead of one per particle.
+    // True circular dust. Each color/opacity bucket is one filled path, so the
+    // renderer gets round particles without a fill call for every particle.
     for(let i=0;i<state.dustBuckets.length;i++){
       const bucket=state.dustBuckets[i];
       if(!bucket.length) continue;
       ctx.fillStyle=state.dustPalette[i];
-      for(let j=0;j<bucket.length;j+=3) ctx.fillRect(bucket[j],bucket[j+1],bucket[j+2],bucket[j+2]);
+      ctx.beginPath();
+      for(let j=0;j<bucket.length;j+=3){
+        const x=bucket[j],y=bucket[j+1],rad=bucket[j+2];
+        ctx.moveTo(x+rad,y);
+        ctx.arc(x,y,rad,0,Math.PI*2);
+      }
+      ctx.fill();
     }
     state.dustRAF=requestAnimationFrame(draw);
   };
