@@ -36,7 +36,8 @@ button,label{user-select:none}
 .safety p{font-family:"Work Sans",Inter,system-ui,sans-serif;color:var(--muted);font-size:9px;line-height:1.5}.safety>div:last-child{display:flex;align-items:center;gap:6px;color:var(--muted);font-size:8px;letter-spacing:.08em}.safety>div:last-child span{width:6px;height:6px;border:1px solid var(--hot);transform:rotate(45deg)}
 @media(max-width:1100px){#app{grid-template-columns:245px minmax(460px,1fr) 270px}.brand span{display:none}.slice-dock{width:38%}.panel section{padding:11px}}
 
-.mode-notice{position:absolute;top:42px;left:50%;transform:translateX(-50%);z-index:14;max-width:600px;border:1px solid var(--line);background:rgba(7,10,13,.92);padding:8px 11px;color:var(--muted);font-size:8px;line-height:1.45;text-align:center;box-shadow:0 10px 30px var(--shadow)}
+.mode-notice{position:absolute;top:42px;left:50%;transform:translateX(-50%);z-index:14;max-width:600px;border:1px solid var(--line);background:rgba(7,10,13,.92);padding:8px 34px 8px 11px;color:var(--muted);font-size:8px;line-height:1.45;text-align:center;box-shadow:0 10px 30px var(--shadow)}
+.mode-notice-close{position:absolute;top:50%;right:7px;transform:translateY(-50%);width:20px;height:20px;border:0;background:transparent;color:var(--muted);font-size:16px;line-height:1;cursor:pointer;padding:0}.mode-notice-close:hover,.mode-notice-close:focus-visible{color:var(--ink);outline:none}.mode-notice-close:focus-visible{box-shadow:0 0 0 1px var(--ink)}
 .drop-active{outline:1px solid var(--cold);outline-offset:-2px}
 /* Native file/folder picker controls: the labels open the picker even if the medical engine fails. */
 .upload-actions .upload-button{border:1px solid var(--line);padding:9px 12px;font-size:8px;letter-spacing:.09em;cursor:pointer;color:var(--ink);background:transparent;display:inline-flex;align-items:center;justify-content:center}

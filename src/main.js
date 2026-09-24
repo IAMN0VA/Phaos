@@ -135,6 +135,8 @@ const els = {
   isolateAnatomy: $('#isolateAnatomy'),
   resetIsolation: $('#resetIsolation'),
   notice: $('#modeNotice'),
+  noticeText: $('#modeNoticeText'),
+  dismissNotice: $('#dismissModeNotice'),
   toast: $('#toast'),
   hud: $('#hud'),
   hudMode: $('#hudMode'),
@@ -330,8 +332,9 @@ function showToast(msg, ms=3600){
   state.toastTimer = setTimeout(() => els.toast.classList.add('hidden'), ms);
 }
 function setNotice(msg){
-  els.notice.textContent = msg || '';
-  els.notice.classList.toggle('hidden', !msg);
+  if(els.noticeText) els.noticeText.textContent = msg || '';
+  else if(els.notice) els.notice.textContent = msg || '';
+  els.notice?.classList.toggle('hidden', !msg);
 }
 function inferDustProgress(label=''){
   const t=String(label).toUpperCase();
@@ -2503,6 +2506,7 @@ els.shadingToggle?.addEventListener('click',()=>{state.shading=!state.shading;el
 
 
 els.audienceModal?.querySelectorAll('[data-audience]').forEach(btn=>btn.addEventListener('click',()=>setAudience(btn.dataset.audience)));
+els.dismissNotice?.addEventListener('click',()=>els.notice?.classList.add('hidden'));
 els.audienceButton?.addEventListener('click',()=>{els.audienceModal?.classList.remove('hidden');setTimeout(()=>els.audienceModal?.querySelector('[data-audience]')?.focus(),0);});
 els.studyHideLabels?.addEventListener('click',()=>setStudyLabelsHidden(true));
 els.studyRevealLabels?.addEventListener('click',()=>setStudyLabelsHidden(false));
