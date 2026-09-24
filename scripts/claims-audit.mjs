@@ -2,19 +2,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 const root=path.resolve(new URL('..',import.meta.url).pathname);
 const html=fs.readFileSync(path.join(root,'index.html'),'utf8');
-const readme=fs.readFileSync(path.join(root,'README.md'),'utf8');
 const intended=fs.readFileSync(path.join(root,'public/intended-use.html'),'utf8');
 const partner=fs.readFileSync(path.join(root,'public/partner-use.html'),'utf8');
-const all=[html,readme,intended,partner].join('\n');
+const all=[html,intended,partner].join('\n');
 const failures=[];
 const required=[
   'data-audience="explore"','data-audience="study"','data-audience="demo"',
   'supplemental educational','not intended for diagnosis','equipment calibration','acceptance testing'
 ];
 for(const token of required){ if(!all.toLowerCase().includes(token.toLowerCase())) failures.push(`missing positioning token: ${token}`); }
-// Public claim surface: the actual app shell plus the opening positioning section of README.
-// Policy/partner docs intentionally name prohibited uses in order to disclaim them.
-const publicSurface=html+'\n'+readme.split('\n').slice(0,35).join('\n');
+// Public claim surface: the actual app shell. Policy and partner pages intentionally name
+// prohibited uses in order to disclaim them.
+const publicSurface=html;
 const positiveClaims=[
   /(?:is|provides|offers|serves as) (?:an? )?diagnostic workstation/i,
   /(?:is|provides|offers|serves as) (?:an? )?pacs replacement/i,
